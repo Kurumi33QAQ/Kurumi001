@@ -1,0 +1,18 @@
+﻿server:
+  port: 8080
+
+spring:
+  application:
+    name: MyMallPlatform
+  profiles:
+    active: dev
+
+jwt:
+  # JWT 绛惧悕瀵嗛挜锛堝涔犻樁娈靛厛鍐欓厤缃噷锛屽悗缁彲鏀逛负鐜鍙橀噺锛?
+  secret: mymallplatform-secret-key-2026-please-change-in-production-1234567890
+  # 杩囨湡鏃堕棿锛堢锛夛細7澶?
+  expiration: 604800
+  # 璇锋眰澶翠腑 token 鐨勫墠缂€
+  token-head: Bearer
+  # 璇锋眰澶村悕绉?
+  token-header: Authorization
