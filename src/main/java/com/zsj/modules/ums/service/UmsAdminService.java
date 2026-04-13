@@ -38,4 +38,9 @@ public interface UmsAdminService {
     AdminInfoDTO getAdminInfo(String username);
 
 
+    /**
+     * 根据用户名获取权限列表
+     */
+    java.util.List<String> getAuthorityList(String username);
+
 }

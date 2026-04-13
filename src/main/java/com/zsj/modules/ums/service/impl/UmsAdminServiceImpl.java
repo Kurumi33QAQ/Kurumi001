@@ -138,4 +138,20 @@ public class UmsAdminServiceImpl implements UmsAdminService {
 
     }
 
+
+    /**
+     * 轻量动态权限示例：
+     * - demo_user 拥有 admin:read
+     * - 其他用户先给空权限
+     * 后续可替换为数据库查询。
+     */
+    @Override
+    public java.util.List<String> getAuthorityList(String username) {
+        if ("demo_user".equals(username)) {
+            return java.util.Collections.singletonList("admin:read");
+        }
+        return java.util.Collections.emptyList();
+    }
+
+
 }

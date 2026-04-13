@@ -10,6 +10,8 @@ import com.zsj.security.config.JwtProperties;
 import com.zsj.security.util.JwtTokenUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import com.zsj.modules.ums.service.UmsAdminService;
@@ -108,11 +110,20 @@ public class DemoController {
     }
 
 
+    /**
+     * 获取当前登录用户信息（不再信任前端传用户名）
+     */
     @GetMapping("/demo/admin/me")
-    public CommonResult<AdminInfoDTO> me(@RequestParam String username) {
+    public CommonResult<AdminInfoDTO> me(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) {
+            return CommonResult.unauthorized(null);
+        }
+
+        String username = authentication.getName();
         AdminInfoDTO info = umsAdminService.getAdminInfo(username);
         return CommonResult.success(info, "获取当前用户信息成功");
     }
+
 
 
 
@@ -129,5 +140,17 @@ public class DemoController {
         }
         return CommonResult.success("token有效，解析用户名：" + tokenUsername);
     }
+
+
+
+    /**
+     * 需要 admin:read 权限的测试接口
+     */
+    @PreAuthorize("hasAuthority('admin:read')")
+    @GetMapping("/demo/admin/secure")
+    public CommonResult<String> secure() {
+        return CommonResult.success("你有 admin:read 权限");
+    }
+
 
 }

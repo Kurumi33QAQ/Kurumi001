@@ -8,11 +8,11 @@ spring:
     active: dev
 
 jwt:
-  # JWT 绛惧悕瀵嗛挜锛堝涔犻樁娈靛厛鍐欓厤缃噷锛屽悗缁彲鏀逛负鐜鍙橀噺锛?
+  # JWT 签名密钥，学习阶段先写在配置里，后续可改为环境变量
   secret: mymallplatform-secret-key-2026-please-change-in-production-1234567890
-  # 杩囨湡鏃堕棿锛堢锛夛細7澶?
+  # 过期时间，单位秒：7天
   expiration: 604800
-  # 璇锋眰澶翠腑 token 鐨勫墠缂€
+  # 请求头中 token 的前缀
   token-head: Bearer
-  # 璇锋眰澶村悕绉?
+  # 请求头名称
   token-header: Authorization

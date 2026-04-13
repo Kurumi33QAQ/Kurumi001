@@ -6,6 +6,9 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import com.zsj.common.exception.ApiException;
 
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
+
 
 /**
  * 全局异常处理器：
@@ -35,6 +38,22 @@ public class GlobalExceptionHandler {
         return CommonResult.failed(e.getErrorCode());
     }
 
+
+    /**
+     * 处理权限不足异常（已认证但无权限）
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public CommonResult<String> handleAccessDeniedException(AccessDeniedException e) {
+        return CommonResult.forbidden("无权限访问该资源");
+    }
+
+    /**
+     * 处理认证异常（未认证或认证失败）
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public CommonResult<String> handleAuthenticationException(AuthenticationException e) {
+        return CommonResult.unauthorized("未认证（未登录或token无效）");
+    }
 
 
     /**
