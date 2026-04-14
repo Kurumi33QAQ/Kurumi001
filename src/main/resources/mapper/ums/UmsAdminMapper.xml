@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.zsj.modules.ums.mapper.UmsAdminMapper">
+
+    <!--
+      根据用户名查询权限点名称列表：
+      用户 -> 用户角色关系 -> 角色 -> 角色资源关系 -> 资源(name)
+    -->
+    <select id="getResourceNameListByUsername" resultType="java.lang.String">
+        SELECT DISTINCT ur.name
+        FROM ums_admin ua
+                 LEFT JOIN ums_admin_role_relation uarr ON ua.id = uarr.admin_id
+                 LEFT JOIN ums_role ur2 ON uarr.role_id = ur2.id
+                 LEFT JOIN ums_role_resource_relation urrr ON ur2.id = urrr.role_id
+                 LEFT JOIN ums_resource ur ON urrr.resource_id = ur.id
+        WHERE ua.username = #{username}
+          AND ur.name IS NOT NULL
+    </select>
+
+</mapper>

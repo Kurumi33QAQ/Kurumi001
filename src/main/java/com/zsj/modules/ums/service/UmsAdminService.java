@@ -21,10 +21,9 @@ public interface UmsAdminService {
     UmsAdmin getByUsername(String username);
 
     /**
-     * 登录校验（先不生成 token，先打通用户名/密码校验）
-     * @return 校验通过返回提示信息，失败返回 null（下一步会优化成业务错误码）
+     * 登录校验（带审计信息）
      */
-    AdminInfoDTO login(String username, String password);
+    AdminInfoDTO login(String username, String password, String ip, String userAgent);
 
     /**
      * 注册（先不生成 token，先打通用户名/密码注册）
@@ -42,5 +41,16 @@ public interface UmsAdminService {
      * 根据用户名获取权限列表
      */
     java.util.List<String> getAuthorityList(String username);
+
+    /**
+     * 清理指定用户的权限缓存
+     */
+    void evictAuthorityCache(String username);
+
+    /**
+     * 获取当前权限缓存中的用户数量
+     */
+    int getAuthorityCacheSize();
+
 
 }

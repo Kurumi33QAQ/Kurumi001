@@ -8,6 +8,7 @@ import com.zsj.modules.ums.dto.RegisterDTO;
 import com.zsj.modules.ums.enums.UmsErrorCode;
 import com.zsj.security.config.JwtProperties;
 import com.zsj.security.util.JwtTokenUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -80,8 +81,11 @@ public class DemoController {
      * 简化登录：校验通过后返回 token + tokenHead + 用户信息
      */
     @PostMapping("/demo/login/simple")
-    public CommonResult<LoginResponseDTO> simpleLogin(@Valid @RequestBody LoginDTO dto) {
-        AdminInfoDTO adminInfo = umsAdminService.login(dto.getUsername(), dto.getPassword());
+    public CommonResult<LoginResponseDTO> simpleLogin(@Valid @RequestBody LoginDTO dto, HttpServletRequest request) {
+        String ip = request.getRemoteAddr();
+        String userAgent = request.getHeader("User-Agent");
+
+        AdminInfoDTO adminInfo = umsAdminService.login(dto.getUsername(), dto.getPassword(), ip, userAgent);
 
         String token = jwtTokenUtil.generateToken(adminInfo.getUsername());
 
@@ -92,6 +96,7 @@ public class DemoController {
 
         return CommonResult.success(response, "登录成功");
     }
+
 
 
 
@@ -151,6 +156,8 @@ public class DemoController {
     public CommonResult<String> secure() {
         return CommonResult.success("你有 admin:read 权限");
     }
+
+
 
 
 }
