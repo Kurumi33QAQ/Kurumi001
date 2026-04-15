@@ -93,6 +93,11 @@ public class CommonResult<T> {
         return build(data, ResultCode.UNAUTHORIZED);
     }
 
+    public static <T> CommonResult<T> unauthorized(T data, String message) {
+        return new CommonResult<>(401, message, data);
+    }
+
+
     /**
      * 无权限（已登录，但没有访问该资源的权限）
      */

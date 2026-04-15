@@ -87,4 +87,42 @@ public class JwtTokenUtil {
             return null;
         }
     }
+
+    /**
+     * 判断 token 是否可以刷新：
+     * 当前最小方案：只要 token 结构合法且未过期，就允许刷新。
+     */
+    public boolean canRefresh(String token) {
+        Claims claims = getClaimsFromToken(token);
+        return claims != null && !isTokenExpired(token);
+    }
+
+    /**
+     * 刷新 token：
+     * 从旧 token 取出用户名，重新签发一个新 token。
+     */
+    public String refreshToken(String oldToken) {
+        if (!canRefresh(oldToken)) {
+            return null;
+        }
+        String username = getUserNameFromToken(oldToken);
+        if (username == null) {
+            return null;
+        }
+        return generateToken(username);
+    }
+
+
+    /**
+     * 获取 token 过期时间戳（毫秒）
+     */
+    public Long getExpireAtMillis(String token) {
+        Claims claims = getClaimsFromToken(token);
+        if (claims == null || claims.getExpiration() == null) {
+            return null;
+        }
+        return claims.getExpiration().getTime();
+    }
+
+
 }

@@ -1,11 +1,11 @@
 package com.zsj.modules.ums.controller;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.zsj.common.api.CommonResult;
-import com.zsj.modules.ums.dto.AdminInfoDTO;
-import com.zsj.modules.ums.dto.LoginDTO;
-import com.zsj.modules.ums.dto.LoginResponseDTO;
-import com.zsj.modules.ums.dto.RegisterDTO;
+import com.zsj.modules.ums.dto.*;
 import com.zsj.modules.ums.enums.UmsErrorCode;
+import com.zsj.modules.ums.model.UmsAdminLoginLog;
+import com.zsj.security.component.TokenBlacklistService;
 import com.zsj.security.config.JwtProperties;
 import com.zsj.security.util.JwtTokenUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,12 +14,24 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import com.zsj.modules.ums.service.UmsAdminService;
 import com.zsj.modules.ums.model.UmsAdmin;
 import java.util.List;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
+
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.time.format.DateTimeFormatter;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.PostMapping;
 
 
+@Validated
 @RestController
 @RequiredArgsConstructor
 public class DemoController {
@@ -27,7 +39,7 @@ public class DemoController {
     private final UmsAdminService umsAdminService;
     private final JwtTokenUtil jwtTokenUtil;
     private final JwtProperties jwtProperties;
-
+    private final TokenBlacklistService tokenBlacklistService;
 
 
 
@@ -158,6 +170,146 @@ public class DemoController {
     }
 
 
+    /**
+     * 分页查询登录日志
+     */
+    @GetMapping("/demo/admin/login-log/list")
+    public CommonResult<IPage<UmsAdminLoginLog>> listLoginLogs(@Valid @ModelAttribute LoginLogQueryDTO queryDTO) {
+        IPage<UmsAdminLoginLog> pageResult = umsAdminService.pageLoginLogs(queryDTO);
+        return CommonResult.success(pageResult, "获取登录日志分页数据成功");
+    }
 
 
+    /**
+     * 导出登录日志（CSV）
+     */
+    @GetMapping("/demo/admin/login-log/export")
+    public void exportLoginLogs(@ModelAttribute LoginLogQueryDTO queryDTO, HttpServletResponse response) throws IOException {
+        List<UmsAdminLoginLog> logs = umsAdminService.listLoginLogsForExport(queryDTO);
+
+        // 设置响应头：告诉浏览器这是一个下载文件
+        String fileName = URLEncoder.encode("login_logs.csv", StandardCharsets.UTF_8).replaceAll("\\+", "%20");
+        response.setContentType("text/csv;charset=UTF-8");
+        response.setCharacterEncoding("UTF-8");
+        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + fileName);
+
+        // 写 BOM，避免 Excel 打开中文乱码
+        response.getWriter().write("\uFEFF");
+
+        // CSV 表头
+        response.getWriter().write("ID,管理员ID,用户名,IP,客户端,状态,消息,创建时间\n");
+
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+        // CSV 数据行
+        for (UmsAdminLoginLog log : logs) {
+            String statusText = (log.getStatus() != null && log.getStatus() == 1) ? "成功" : "失败";
+            String createTime = log.getCreateTime() == null ? "" : log.getCreateTime().format(formatter);
+
+            // 处理逗号和双引号，避免破坏 CSV 格式
+            String username = escapeCsv(log.getUsername());
+            String ip = escapeCsv(log.getIp());
+            String userAgent = escapeCsv(log.getUserAgent());
+            String message = escapeCsv(log.getMessage());
+
+            response.getWriter().write(String.format(
+                    "%d,%d,%s,%s,%s,%s,%s,%s\n",
+                    log.getId() == null ? 0 : log.getId(),
+                    log.getAdminId() == null ? 0 : log.getAdminId(),
+                    username,
+                    ip,
+                    userAgent,
+                    statusText,
+                    message,
+                    createTime
+            ));
+        }
+
+        response.getWriter().flush();
+    }
+
+    /**
+     * CSV 字段转义：包含逗号/双引号/换行时用双引号包裹，并转义内部双引号
+     */
+    private String escapeCsv(String value) {
+        if (value == null) {
+            return "";
+        }
+        boolean needQuote = value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r");
+        String escaped = value.replace("\"", "\"\"");
+        return needQuote ? "\"" + escaped + "\"" : escaped;
+    }
+
+
+
+    /**
+     * 清理指定时间之前的登录日志
+     */
+    @PostMapping("/demo/admin/login-log/clean")
+    public CommonResult<Integer> cleanLoginLogs(@Valid @RequestBody LoginLogCleanDTO cleanDTO) {
+        int count = umsAdminService.cleanLoginLogsBefore(cleanDTO.getBeforeTime());
+        return CommonResult.success(count, "清理登录日志成功");
+    }
+
+
+
+    /**
+     * 刷新 token：
+     * 1. 从 Authorization 头读取旧 token
+     * 2. 校验是否可刷新
+     * 3. 返回新 token
+     */
+    @PostMapping("/demo/token/refresh")
+    public CommonResult<java.util.Map<String, String>> refreshToken(
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+
+        // 1) 基础校验：请求头不能为空，且要以 "Bearer " 开头
+        if (authorization == null || !authorization.startsWith("Bearer ")) {
+            return CommonResult.unauthorized(null, "未认证（缺少或非法 Authorization 头）");
+        }
+
+        // 2) 提取旧 token
+        String oldToken = authorization.substring(7);
+
+        // 3) 调用工具类刷新
+        String newToken = jwtTokenUtil.refreshToken(oldToken);
+        if (newToken == null) {
+            return CommonResult.unauthorized(null, "token 无法刷新（可能已过期或无效）");
+        }
+
+        // 4) 按现有登录返回风格返回 token
+        java.util.Map<String, String> tokenMap = new java.util.HashMap<>();
+        tokenMap.put("token", newToken);
+        tokenMap.put("tokenHead", "Bearer");
+
+        return CommonResult.success(tokenMap, "刷新 token 成功");
+    }
+
+
+
+    /**
+     * 退出登录：
+     * 1. 读取当前 Authorization 头
+     * 2. 解析 token 过期时间
+     * 3. 把 token 加入黑名单，立即失效
+     */
+    @PostMapping("/demo/logout")
+    public CommonResult<String> logout(
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+
+        if (authorization == null || !authorization.startsWith("Bearer ")) {
+            return CommonResult.unauthorized("未认证（缺少或非法 Authorization 头）");
+        }
+
+        String token = authorization.substring(7);
+        Long expireAtMillis = jwtTokenUtil.getExpireAtMillis(token);
+
+        // token 无法解析时，也按未认证处理
+        if (expireAtMillis == null) {
+            return CommonResult.unauthorized("token 无效，退出失败");
+        }
+
+        tokenBlacklistService.add(token, expireAtMillis);
+        return CommonResult.success("退出登录成功");
+    }
 }

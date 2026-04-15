@@ -2,9 +2,12 @@ package com.zsj.modules.ums.controller;
 
 import com.zsj.common.api.CommonResult;
 import com.zsj.modules.ums.service.UmsAdminService;
+import com.zsj.security.component.TokenBlacklistService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -16,13 +19,12 @@ import java.util.List;
  */
 @Profile("dev")
 @RestController
+@RequiredArgsConstructor
 public class DevDebugController {
 
     private final UmsAdminService umsAdminService;
+    private final TokenBlacklistService tokenBlacklistService;
 
-    public DevDebugController(UmsAdminService umsAdminService) {
-        this.umsAdminService = umsAdminService;
-    }
 
     /**
      * 查看当前登录用户的权限列表（调试用）
@@ -55,5 +57,24 @@ public class DevDebugController {
     public CommonResult<Integer> authorityCacheSize() {
         return CommonResult.success(umsAdminService.getAuthorityCacheSize(), "获取缓存大小成功");
     }
+
+
+    /**
+     * 查看黑名单数量（调试）
+     */
+    @GetMapping("/demo/admin/blacklist/size")
+    public CommonResult<Integer> blacklistSize() {
+        return CommonResult.success(tokenBlacklistService.size(), "获取黑名单数量成功");
+    }
+
+    /**
+     * 手动触发一次过期清理（调试）
+     */
+    @PostMapping("/demo/admin/blacklist/clean")
+    public CommonResult<Integer> cleanBlacklistNow() {
+        int removed = tokenBlacklistService.cleanExpired();
+        return CommonResult.success(removed, "手动清理黑名单成功");
+    }
+
 
 }

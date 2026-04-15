@@ -1,7 +1,10 @@
 package com.zsj.modules.ums.service;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.zsj.modules.ums.dto.AdminInfoDTO;
+import com.zsj.modules.ums.dto.LoginLogQueryDTO;
 import com.zsj.modules.ums.model.UmsAdmin;
+import com.zsj.modules.ums.model.UmsAdminLoginLog;
 
 import java.util.List;
 
@@ -52,5 +55,24 @@ public interface UmsAdminService {
      */
     int getAuthorityCacheSize();
 
+
+    /**
+     * 登录日志分页查询
+     */
+    IPage<UmsAdminLoginLog> pageLoginLogs(LoginLogQueryDTO queryDTO);
+
+
+    /**
+     * 按条件查询登录日志（用于导出，不分页）
+     */
+    List<UmsAdminLoginLog> listLoginLogsForExport(LoginLogQueryDTO queryDTO);
+
+    /**
+     * 清理指定时间之前的登录日志
+     *
+     * @param beforeTime 截止时间（<= beforeTime 的日志会被删除）
+     * @return 删除条数
+     */
+    int cleanLoginLogsBefore(java.time.LocalDateTime beforeTime);
 
 }

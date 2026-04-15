@@ -46,8 +46,10 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/demo/login/simple",
                                 "/demo/register/simple",
-                                "/demo/token/check"
-                        ).permitAll()
+                                "/demo/token/check",
+                                "/demo/logout",
+                                "/demo/token/refresh"
+                                ).permitAll()
                         // 其他请求需要认证
                         .anyRequest().authenticated()
                 )

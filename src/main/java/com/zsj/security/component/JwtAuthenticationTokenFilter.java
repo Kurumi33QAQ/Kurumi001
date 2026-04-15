@@ -7,6 +7,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.User;
@@ -22,20 +23,15 @@ import java.util.Collections;
  * JWT 认证过滤器：
  * 从请求头读取 token，校验通过后把用户信息放入 SecurityContext。
  */
+@RequiredArgsConstructor
 @Component
 public class JwtAuthenticationTokenFilter extends OncePerRequestFilter {
 
     private final JwtProperties jwtProperties;
     private final JwtTokenUtil jwtTokenUtil;
     private final UmsAdminService umsAdminService;
+    private final TokenBlacklistService tokenBlacklistService;
 
-    public JwtAuthenticationTokenFilter(JwtProperties jwtProperties,
-                                        JwtTokenUtil jwtTokenUtil,
-                                        UmsAdminService umsAdminService) {
-        this.jwtProperties = jwtProperties;
-        this.jwtTokenUtil = jwtTokenUtil;
-        this.umsAdminService = umsAdminService;
-    }
 
 
     @Override
@@ -47,6 +43,17 @@ public class JwtAuthenticationTokenFilter extends OncePerRequestFilter {
 
         if (StringUtils.hasText(authHeader) && authHeader.startsWith(jwtProperties.getTokenHead() + " ")) {
             String token = authHeader.substring((jwtProperties.getTokenHead() + " ").length());
+
+            // 先检查是否在黑名单（例如用户已退出登录）
+            if (tokenBlacklistService.contains(token)) {
+                // 不写入 SecurityContext，直接放行到后续链路；
+                // 后续受保护接口会按未认证处理（401）
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+
+
             String username = jwtTokenUtil.getUserNameFromToken(token);
 
             // 当前线程上下文中还没有认证信息时，尝试设置

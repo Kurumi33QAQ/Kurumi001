@@ -1,8 +1,11 @@
 package com.zsj.modules.ums.service.impl;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zsj.common.api.ResultCode;
 import com.zsj.common.exception.ApiException;
 import com.zsj.modules.ums.dto.AdminInfoDTO;
+import com.zsj.modules.ums.dto.LoginLogQueryDTO;
 import com.zsj.modules.ums.enums.UmsErrorCode;
 import com.zsj.modules.ums.mapper.UmsAdminLoginLogMapper;
 import com.zsj.modules.ums.mapper.UmsAdminMapper;
@@ -13,8 +16,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.springframework.util.StringUtils;
 
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -212,4 +217,74 @@ public class UmsAdminServiceImpl implements UmsAdminService {
     }
 
 
+    /**
+     * 分页查询登录日志（支持用户名、状态、时间区间筛选）
+     */
+    @Override
+    public IPage<UmsAdminLoginLog> pageLoginLogs(LoginLogQueryDTO queryDTO) {
+        LambdaQueryWrapper<UmsAdminLoginLog> wrapper = new LambdaQueryWrapper<>();
+
+        // 用户名：模糊匹配
+        if (StringUtils.hasText(queryDTO.getUsername())) {
+            wrapper.like(UmsAdminLoginLog::getUsername, queryDTO.getUsername());
+        }
+
+        // 状态：精确匹配（0失败，1成功）
+        if (queryDTO.getStatus() != null) {
+            wrapper.eq(UmsAdminLoginLog::getStatus, queryDTO.getStatus());
+        }
+
+        // 时间区间：大于等于开始时间，小于等于结束时间
+        if (queryDTO.getStartTime() != null) {
+            wrapper.ge(UmsAdminLoginLog::getCreateTime, queryDTO.getStartTime());
+        }
+        if (queryDTO.getEndTime() != null) {
+            wrapper.le(UmsAdminLoginLog::getCreateTime, queryDTO.getEndTime());
+        }
+
+        // 按创建时间倒序，再按id倒序（保证同秒下顺序稳定）
+        wrapper.orderByDesc(UmsAdminLoginLog::getCreateTime)
+                .orderByDesc(UmsAdminLoginLog::getId);
+
+        Page<UmsAdminLoginLog> page = new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize());
+        return umsAdminLoginLogMapper.selectPage(page, wrapper);
+    }
+
+
+    /**
+     * 按条件查询登录日志（用于导出，不分页）
+     */
+    @Override
+    public List<UmsAdminLoginLog> listLoginLogsForExport(LoginLogQueryDTO queryDTO) {
+        LambdaQueryWrapper<UmsAdminLoginLog> wrapper = new LambdaQueryWrapper<>();
+
+        if (StringUtils.hasText(queryDTO.getUsername())) {
+            wrapper.like(UmsAdminLoginLog::getUsername, queryDTO.getUsername());
+        }
+        if (queryDTO.getStatus() != null) {
+            wrapper.eq(UmsAdminLoginLog::getStatus, queryDTO.getStatus());
+        }
+        if (queryDTO.getStartTime() != null) {
+            wrapper.ge(UmsAdminLoginLog::getCreateTime, queryDTO.getStartTime());
+        }
+        if (queryDTO.getEndTime() != null) {
+            wrapper.le(UmsAdminLoginLog::getCreateTime, queryDTO.getEndTime());
+        }
+
+        wrapper.orderByDesc(UmsAdminLoginLog::getCreateTime)
+                .orderByDesc(UmsAdminLoginLog::getId);
+
+        return umsAdminLoginLogMapper.selectList(wrapper);
+    }
+
+
+    /**
+     * 清理指定时间之前的登录日志
+     */
+    @Override
+    public int cleanLoginLogsBefore(LocalDateTime beforeTime) {
+        LambdaQueryWrapper<UmsAdminLoginLog> wrapper = new LambdaQueryWrapper<>();
+        wrapper.le(UmsAdminLoginLog::getCreateTime, beforeTime);
+        return umsAdminLoginLogMapper.delete(wrapper);
+    }
 }
