@@ -312,4 +312,37 @@ public class DemoController {
         tokenBlacklistService.add(token, expireAtMillis);
         return CommonResult.success("退出登录成功");
     }
+
+
+
+    /**
+     * 分配用户角色（覆盖式）
+     */
+    @PostMapping("/demo/admin/role/assign")
+    public CommonResult<String> assignAdminRoles(@Valid @RequestBody AdminRoleAssignDTO dto) {
+        umsAdminService.assignRoles(dto.getAdminId(), dto.getRoleIds());
+        return CommonResult.success("分配角色成功");
+    }
+
+
+
+    /**
+     * 查询用户已分配角色ID列表
+     */
+    @GetMapping("/demo/admin/role/list")
+    public CommonResult<java.util.List<Long>> listAdminRoles(@RequestParam Long adminId) {
+        java.util.List<Long> roleIds = umsAdminService.getRoleIdsByAdminId(adminId);
+        return CommonResult.success(roleIds, "查询用户角色成功");
+    }
+
+
+
+    /**
+     * 给角色分配资源（覆盖式）
+     */
+    @PostMapping("/demo/admin/role/resource/assign")
+    public CommonResult<String> assignRoleResources(@Valid @RequestBody RoleResourceAssignDTO dto) {
+        umsAdminService.assignRoleResources(dto.getRoleId(), dto.getResourceIds());
+        return CommonResult.success("角色资源分配成功");
+    }
 }

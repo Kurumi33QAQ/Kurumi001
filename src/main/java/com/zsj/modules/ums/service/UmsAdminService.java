@@ -75,4 +75,24 @@ public interface UmsAdminService {
      */
     int cleanLoginLogsBefore(java.time.LocalDateTime beforeTime);
 
+
+    /**
+     * 给用户分配角色（覆盖式）
+     */
+    void assignRoles(Long adminId, java.util.List<Long> roleIds);
+
+
+    /**
+     * 查询用户已分配角色ID列表
+     */
+    java.util.List<Long> getRoleIdsByAdminId(Long adminId);
+
+
+
+    /**
+     * 给角色分配资源（覆盖式）
+     */
+    void assignRoleResources(Long roleId, java.util.List<Long> resourceIds);
+
+
 }

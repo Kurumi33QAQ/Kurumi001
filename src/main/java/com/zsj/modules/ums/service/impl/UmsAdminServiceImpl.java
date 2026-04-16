@@ -9,18 +9,25 @@ import com.zsj.modules.ums.dto.LoginLogQueryDTO;
 import com.zsj.modules.ums.enums.UmsErrorCode;
 import com.zsj.modules.ums.mapper.UmsAdminLoginLogMapper;
 import com.zsj.modules.ums.mapper.UmsAdminMapper;
+import com.zsj.modules.ums.mapper.UmsAdminRoleRelationMapper;
+import com.zsj.modules.ums.mapper.UmsRoleResourceRelationMapper;
 import com.zsj.modules.ums.model.UmsAdmin;
 import com.zsj.modules.ums.model.UmsAdminLoginLog;
+import com.zsj.modules.ums.model.UmsAdminRoleRelation;
+import com.zsj.modules.ums.model.UmsRoleResourceRelation;
 import com.zsj.modules.ums.service.UmsAdminService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 后台用户业务实现
@@ -32,14 +39,16 @@ public class UmsAdminServiceImpl implements UmsAdminService {
     private final UmsAdminMapper umsAdminMapper;
     private final PasswordEncoder passwordEncoder;
     private final UmsAdminLoginLogMapper umsAdminLoginLogMapper;
+    // Redis 权限缓存 key 前缀
+    private static final String AUTH_CACHE_PREFIX = "security:authority:user:";
+    // 权限缓存过期时间（先用30分钟）
+    private static final long AUTH_CACHE_TTL_MINUTES = 30;
+    private final StringRedisTemplate stringRedisTemplate;
+    private final UmsAdminRoleRelationMapper umsAdminRoleRelationMapper;
+    private final UmsRoleResourceRelationMapper umsRoleResourceRelationMapper;
 
 
-    /**
-     * 权限缓存（key=username, value=权限列表）
-     * 先用内存缓存做最小优化，后续可替换为 Redis。
-     */
-    private final java.util.concurrent.ConcurrentHashMap<String, java.util.List<String>> authorityCache =
-            new java.util.concurrent.ConcurrentHashMap<>();
+
 
 
     /**
@@ -146,7 +155,7 @@ public class UmsAdminServiceImpl implements UmsAdminService {
 
 
         // 注册后清理该用户权限缓存，避免后续读到旧数据
-        authorityCache.remove(username);
+        evictAuthorityCache(username);
 
         return admin.getId();
     }
@@ -192,29 +201,53 @@ public class UmsAdminServiceImpl implements UmsAdminService {
 
 
     /**
-     * 根据用户名获取权限列表（带本地缓存）
+     * 获取用户权限列表（Redis缓存版）
+     * 1. 先查 Redis
+     * 2. 命中直接返回
+     * 3. 未命中查数据库并回写 Redis（带TTL）
      */
     @Override
     public java.util.List<String> getAuthorityList(String username) {
-        return authorityCache.computeIfAbsent(username, key -> umsAdminMapper.getResourceNameListByUsername(key));
+        String key = AUTH_CACHE_PREFIX + username;
+
+        // 1) 先从 Redis 取缓存（Set结构）
+        java.util.Set<String> cachedSet = stringRedisTemplate.opsForSet().members(key);
+        if (cachedSet != null && !cachedSet.isEmpty()) {
+            return new java.util.ArrayList<>(cachedSet);
+        }
+
+        // 2) 缓存未命中，查数据库
+        java.util.List<String> authorityList = umsAdminMapper.getResourceNameListByUsername(username);
+
+        // 3) 回写缓存
+        if (authorityList != null && !authorityList.isEmpty()) {
+            stringRedisTemplate.opsForSet().add(key, authorityList.toArray(new String[0]));
+            stringRedisTemplate.expire(key, AUTH_CACHE_TTL_MINUTES, TimeUnit.MINUTES);
+        }
+
+        return authorityList == null ? new java.util.ArrayList<>() : authorityList;
     }
 
 
     /**
-     * 清理指定用户权限缓存
+     * 清理指定用户权限缓存（Redis）
      */
     @Override
     public void evictAuthorityCache(String username) {
-        authorityCache.remove(username);
+        String key = AUTH_CACHE_PREFIX + username;
+        stringRedisTemplate.delete(key);
     }
+
 
     /**
      * 获取当前缓存条目数（调试用）
      */
     @Override
     public int getAuthorityCacheSize() {
-        return authorityCache.size();
+        java.util.Set<String> keys = stringRedisTemplate.keys(AUTH_CACHE_PREFIX + "*");
+        return keys == null ? 0 : keys.size();
     }
+
 
 
     /**
@@ -287,4 +320,90 @@ public class UmsAdminServiceImpl implements UmsAdminService {
         wrapper.le(UmsAdminLoginLog::getCreateTime, beforeTime);
         return umsAdminLoginLogMapper.delete(wrapper);
     }
+
+
+
+    /**
+     * 给用户分配角色（覆盖式）：
+     * 1. 删除该用户旧角色关系
+     * 2. 插入新角色关系
+     * 3. 清理该用户权限缓存，保证下次鉴权读取最新权限
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void assignRoles(Long adminId, java.util.List<Long> roleIds) {
+        // 1) 校验用户存在
+        UmsAdmin admin = umsAdminMapper.selectById(adminId);
+        if (admin == null) {
+            throw new ApiException(UmsErrorCode.ADMIN_NOT_FOUND);
+        }
+
+        // 2) 删旧关系
+        LambdaQueryWrapper<UmsAdminRoleRelation> deleteWrapper = new LambdaQueryWrapper<>();
+        deleteWrapper.eq(UmsAdminRoleRelation::getAdminId, adminId);
+        umsAdminRoleRelationMapper.delete(deleteWrapper);
+
+        // 3) 插入新关系
+        for (Long roleId : roleIds) {
+            UmsAdminRoleRelation relation = new UmsAdminRoleRelation();
+            relation.setAdminId(adminId);
+            relation.setRoleId(roleId);
+            umsAdminRoleRelationMapper.insert(relation);
+        }
+
+        // 4) 自动清理权限缓存
+        evictAuthorityCache(admin.getUsername());
+    }
+
+
+
+    /**
+     * 查询用户已分配角色ID列表
+     */
+    @Override
+    public java.util.List<Long> getRoleIdsByAdminId(Long adminId) {
+        LambdaQueryWrapper<UmsAdminRoleRelation> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(UmsAdminRoleRelation::getAdminId, adminId);
+
+        java.util.List<UmsAdminRoleRelation> list = umsAdminRoleRelationMapper.selectList(wrapper);
+        return list.stream().map(UmsAdminRoleRelation::getRoleId).toList();
+    }
+
+
+
+    /**
+     * 给角色分配资源（覆盖式）：
+     * 1. 删除该角色旧资源关系
+     * 2. 插入新资源关系
+     * 3. 清理所有受影响用户的权限缓存（拥有该角色的用户）
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void assignRoleResources(Long roleId, java.util.List<Long> resourceIds) {
+        // 1) 删除该角色旧资源关系
+        LambdaQueryWrapper<UmsRoleResourceRelation> delWrapper = new LambdaQueryWrapper<>();
+        delWrapper.eq(UmsRoleResourceRelation::getRoleId, roleId);
+        umsRoleResourceRelationMapper.delete(delWrapper);
+
+        // 2) 插入新资源关系
+        for (Long resourceId : resourceIds) {
+            UmsRoleResourceRelation relation = new UmsRoleResourceRelation();
+            relation.setRoleId(roleId);
+            relation.setResourceId(resourceId);
+            umsRoleResourceRelationMapper.insert(relation);
+        }
+
+        // 3) 找到拥有该角色的用户，并清理其权限缓存
+        LambdaQueryWrapper<UmsAdminRoleRelation> adminRoleWrapper = new LambdaQueryWrapper<>();
+        adminRoleWrapper.eq(UmsAdminRoleRelation::getRoleId, roleId);
+        java.util.List<UmsAdminRoleRelation> adminRoleList = umsAdminRoleRelationMapper.selectList(adminRoleWrapper);
+
+        for (UmsAdminRoleRelation ar : adminRoleList) {
+            UmsAdmin admin = umsAdminMapper.selectById(ar.getAdminId());
+            if (admin != null && admin.getUsername() != null) {
+                evictAuthorityCache(admin.getUsername());
+            }
+        }
+    }
+
 }
