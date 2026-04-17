@@ -2,10 +2,13 @@ package com.zsj.modules.ums.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.zsj.modules.ums.dto.AdminInfoDTO;
+import com.zsj.modules.ums.dto.AdminPermissionSummaryDTO;
 import com.zsj.modules.ums.dto.LoginLogQueryDTO;
+import com.zsj.modules.ums.dto.OptionDTO;
 import com.zsj.modules.ums.model.UmsAdmin;
 import com.zsj.modules.ums.model.UmsAdminLoginLog;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -43,7 +46,7 @@ public interface UmsAdminService {
     /**
      * 根据用户名获取权限列表
      */
-    java.util.List<String> getAuthorityList(String username);
+    List<String> getAuthorityList(String username);
 
     /**
      * 清理指定用户的权限缓存
@@ -73,13 +76,13 @@ public interface UmsAdminService {
      * @param beforeTime 截止时间（<= beforeTime 的日志会被删除）
      * @return 删除条数
      */
-    int cleanLoginLogsBefore(java.time.LocalDateTime beforeTime);
+    int cleanLoginLogsBefore(LocalDateTime beforeTime);
 
 
     /**
      * 给用户分配角色（覆盖式）
      */
-    void assignRoles(Long adminId, java.util.List<Long> roleIds);
+    void assignRoles(Long adminId, List<Long> roleIds);
 
 
     /**
@@ -92,7 +95,30 @@ public interface UmsAdminService {
     /**
      * 给角色分配资源（覆盖式）
      */
-    void assignRoleResources(Long roleId, java.util.List<Long> resourceIds);
+    void assignRoleResources(Long roleId, List<Long> resourceIds);
+
+
+    /**
+     * 角色下拉选项
+     */
+    List<OptionDTO> listRoleOptions();
+
+    /**
+     * 资源下拉选项（权限点）
+     */
+    List<OptionDTO> listResourceOptions();
+
+
+    /**
+     * 查询角色已分配资源ID列表
+     */
+    List<Long> getResourceIdsByRoleId(Long roleId);
+
+
+    /**
+     * 查询用户权限汇总（用户信息 + 角色名 + 权限点）
+     */
+    AdminPermissionSummaryDTO getAdminPermissionSummary(Long adminId);
 
 
 }

@@ -345,4 +345,42 @@ public class DemoController {
         umsAdminService.assignRoleResources(dto.getRoleId(), dto.getResourceIds());
         return CommonResult.success("角色资源分配成功");
     }
+
+
+    /**
+     * 获取角色下拉选项
+     */
+    @GetMapping("/demo/admin/role/options")
+    public CommonResult<List<OptionDTO>> roleOptions() {
+        return CommonResult.success(umsAdminService.listRoleOptions(), "获取角色选项成功");
+    }
+
+    /**
+     * 获取资源下拉选项
+     */
+    @GetMapping("/demo/admin/resource/options")
+    public CommonResult<List<OptionDTO>> resourceOptions() {
+        return CommonResult.success(umsAdminService.listResourceOptions(), "获取资源选项成功");
+    }
+
+
+    /**
+     * 查询角色已分配资源ID列表
+     */
+    @GetMapping("/demo/admin/role/resource/list")
+    public CommonResult<List<Long>> listRoleResourceIds(@RequestParam Long roleId) {
+        List<Long> resourceIds = umsAdminService.getResourceIdsByRoleId(roleId);
+        return CommonResult.success(resourceIds, "查询角色资源成功");
+    }
+
+
+    /**
+     * 查询用户权限汇总（用户信息 + 角色名 + 权限点）
+     */
+    @GetMapping("/demo/admin/permission/summary")
+    public CommonResult<AdminPermissionSummaryDTO> permissionSummary(@RequestParam Long adminId) {
+        AdminPermissionSummaryDTO dto = umsAdminService.getAdminPermissionSummary(adminId);
+        return CommonResult.success(dto, "查询用户权限汇总成功");
+    }
+
 }

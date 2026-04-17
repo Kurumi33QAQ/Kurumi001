@@ -10,8 +10,8 @@ spring:
 jwt:
   # JWT 签名密钥，学习阶段先写在配置里，后续可改为环境变量
   secret: mymallplatform-secret-key-2026-please-change-in-production-1234567890
-  # 过期时间，单位秒：7天
-  expiration: 604800
+  # 过期时间，单位秒：12h
+  expiration: 43200
   # 请求头中 token 的前缀
   token-head: Bearer
   # 请求头名称

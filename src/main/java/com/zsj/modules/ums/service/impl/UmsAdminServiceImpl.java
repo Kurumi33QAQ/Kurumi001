@@ -1,11 +1,13 @@
 package com.zsj.modules.ums.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zsj.common.api.ResultCode;
 import com.zsj.common.exception.ApiException;
 import com.zsj.modules.ums.dto.AdminInfoDTO;
 import com.zsj.modules.ums.dto.LoginLogQueryDTO;
+import com.zsj.modules.ums.dto.OptionDTO;
 import com.zsj.modules.ums.enums.UmsErrorCode;
 import com.zsj.modules.ums.mapper.UmsAdminLoginLogMapper;
 import com.zsj.modules.ums.mapper.UmsAdminMapper;
@@ -23,10 +25,16 @@ import org.springframework.stereotype.Service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import com.zsj.modules.ums.dto.AdminPermissionSummaryDTO;
+import com.zsj.modules.ums.model.UmsAdminRoleRelation;
+import com.zsj.modules.ums.model.UmsRole;
+
 
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -46,6 +54,15 @@ public class UmsAdminServiceImpl implements UmsAdminService {
     private final StringRedisTemplate stringRedisTemplate;
     private final UmsAdminRoleRelationMapper umsAdminRoleRelationMapper;
     private final UmsRoleResourceRelationMapper umsRoleResourceRelationMapper;
+    /**
+     * 登录失败达到该次数后锁定
+     */
+    private static final int MAX_LOGIN_FAIL_COUNT = 5;
+
+    /**
+     * 锁定时长（分钟）
+     */
+    private static final long LOCK_MINUTES = 10;
 
 
 
@@ -113,19 +130,50 @@ public class UmsAdminServiceImpl implements UmsAdminService {
             throw new ApiException(UmsErrorCode.ADMIN_DISABLED);
         }
 
-        if (admin.getPassword() == null || !passwordEncoder.matches(password, admin.getPassword())) {
-            recordLoginLog(admin.getId(), username, ip, userAgent, 0, "密码错误");
-            throw new ApiException(UmsErrorCode.PASSWORD_ERROR);
+        // 1) 先判断是否锁定中
+        if (isLocked(admin)) {
+            long remain = remainLockMinutes(admin);
+            recordLoginLog(admin.getId(), username, ip, userAgent, 0, "账号锁定中");
+            throw new ApiException(UmsErrorCode.ADMIN_LOCKED);
         }
 
-        UmsAdmin update = new UmsAdmin();
-        update.setId(admin.getId());
-        update.setLoginTime(java.time.LocalDateTime.now());
-        umsAdminMapper.updateById(update);
+        // 2) 密码错误：失败次数+1；达到阈值就锁定
+        if (admin.getPassword() == null || !passwordEncoder.matches(password, admin.getPassword())) {
+            int failCount = (admin.getLoginFailCount() == null ? 0 : admin.getLoginFailCount()) + 1;
+
+            UmsAdmin updateFail = new UmsAdmin();
+            updateFail.setId(admin.getId());
+            updateFail.setLoginFailCount(failCount);
+
+            if (failCount >= MAX_LOGIN_FAIL_COUNT) {
+                updateFail.setLockExpireTime(LocalDateTime.now().plusMinutes(LOCK_MINUTES));
+            }
+
+            umsAdminMapper.updateById(updateFail);
+
+            if (failCount >= MAX_LOGIN_FAIL_COUNT) {
+                recordLoginLog(admin.getId(), username, ip, userAgent, 0, "密码错误，账号已锁定");
+                throw new ApiException(UmsErrorCode.ADMIN_LOCKED_BY_FAIL);
+            } else {
+                recordLoginLog(admin.getId(), username, ip, userAgent, 0, "密码错误");
+                throw new ApiException(UmsErrorCode.PASSWORD_ERROR);
+            }
+        }
+
+        // 3) 密码正确：清零失败次数、清空锁定时间、更新登录时间
+        LambdaUpdateWrapper<UmsAdmin> successWrapper = new LambdaUpdateWrapper<>();
+        successWrapper.eq(UmsAdmin::getId, admin.getId())
+                .set(UmsAdmin::getLoginTime, LocalDateTime.now())
+                .set(UmsAdmin::getLoginFailCount, 0)
+                .set(UmsAdmin::getLockExpireTime, null);
+
+        umsAdminMapper.update(null, successWrapper);
+
 
         recordLoginLog(admin.getId(), username, ip, userAgent, 1, "登录成功");
         return toAdminInfoDTO(admin);
     }
+
 
 
 
@@ -207,17 +255,17 @@ public class UmsAdminServiceImpl implements UmsAdminService {
      * 3. 未命中查数据库并回写 Redis（带TTL）
      */
     @Override
-    public java.util.List<String> getAuthorityList(String username) {
+    public List<String> getAuthorityList(String username) {
         String key = AUTH_CACHE_PREFIX + username;
 
         // 1) 先从 Redis 取缓存（Set结构）
-        java.util.Set<String> cachedSet = stringRedisTemplate.opsForSet().members(key);
+        Set<String> cachedSet = stringRedisTemplate.opsForSet().members(key);
         if (cachedSet != null && !cachedSet.isEmpty()) {
-            return new java.util.ArrayList<>(cachedSet);
+            return new ArrayList<>(cachedSet);
         }
 
         // 2) 缓存未命中，查数据库
-        java.util.List<String> authorityList = umsAdminMapper.getResourceNameListByUsername(username);
+        List<String> authorityList = umsAdminMapper.getResourceNameListByUsername(username);
 
         // 3) 回写缓存
         if (authorityList != null && !authorityList.isEmpty()) {
@@ -225,7 +273,7 @@ public class UmsAdminServiceImpl implements UmsAdminService {
             stringRedisTemplate.expire(key, AUTH_CACHE_TTL_MINUTES, TimeUnit.MINUTES);
         }
 
-        return authorityList == null ? new java.util.ArrayList<>() : authorityList;
+        return authorityList == null ? new ArrayList<>() : authorityList;
     }
 
 
@@ -244,7 +292,7 @@ public class UmsAdminServiceImpl implements UmsAdminService {
      */
     @Override
     public int getAuthorityCacheSize() {
-        java.util.Set<String> keys = stringRedisTemplate.keys(AUTH_CACHE_PREFIX + "*");
+        Set<String> keys = stringRedisTemplate.keys(AUTH_CACHE_PREFIX + "*");
         return keys == null ? 0 : keys.size();
     }
 
@@ -331,7 +379,7 @@ public class UmsAdminServiceImpl implements UmsAdminService {
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void assignRoles(Long adminId, java.util.List<Long> roleIds) {
+    public void assignRoles(Long adminId, List<Long> roleIds) {
         // 1) 校验用户存在
         UmsAdmin admin = umsAdminMapper.selectById(adminId);
         if (admin == null) {
@@ -361,11 +409,11 @@ public class UmsAdminServiceImpl implements UmsAdminService {
      * 查询用户已分配角色ID列表
      */
     @Override
-    public java.util.List<Long> getRoleIdsByAdminId(Long adminId) {
+    public List<Long> getRoleIdsByAdminId(Long adminId) {
         LambdaQueryWrapper<UmsAdminRoleRelation> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(UmsAdminRoleRelation::getAdminId, adminId);
 
-        java.util.List<UmsAdminRoleRelation> list = umsAdminRoleRelationMapper.selectList(wrapper);
+        List<UmsAdminRoleRelation> list = umsAdminRoleRelationMapper.selectList(wrapper);
         return list.stream().map(UmsAdminRoleRelation::getRoleId).toList();
     }
 
@@ -379,7 +427,7 @@ public class UmsAdminServiceImpl implements UmsAdminService {
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void assignRoleResources(Long roleId, java.util.List<Long> resourceIds) {
+    public void assignRoleResources(Long roleId, List<Long> resourceIds) {
         // 1) 删除该角色旧资源关系
         LambdaQueryWrapper<UmsRoleResourceRelation> delWrapper = new LambdaQueryWrapper<>();
         delWrapper.eq(UmsRoleResourceRelation::getRoleId, roleId);
@@ -405,5 +453,98 @@ public class UmsAdminServiceImpl implements UmsAdminService {
             }
         }
     }
+
+
+
+    /**
+     * 角色下拉选项
+     */
+    @Override
+    public List<OptionDTO> listRoleOptions() {
+        return umsAdminMapper.listRoleOptions();
+    }
+
+    /**
+     * 资源下拉选项（权限点）
+     */
+    @Override
+    public List<OptionDTO> listResourceOptions() {
+        return umsAdminMapper.listResourceOptions();
+    }
+
+
+    /**
+     * 查询角色已分配资源ID列表
+     */
+    @Override
+    public List<Long> getResourceIdsByRoleId(Long roleId) {
+        LambdaQueryWrapper<UmsRoleResourceRelation> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(UmsRoleResourceRelation::getRoleId, roleId);
+
+        List<UmsRoleResourceRelation> list = umsRoleResourceRelationMapper.selectList(wrapper);
+        return list.stream().map(UmsRoleResourceRelation::getResourceId).toList();
+    }
+
+
+
+    /**
+     * 查询用户权限汇总（用户信息 + 角色名 + 权限点）
+     */
+    @Override
+    public AdminPermissionSummaryDTO getAdminPermissionSummary(Long adminId) {
+        UmsAdmin admin = umsAdminMapper.selectById(adminId);
+        if (admin == null) {
+            throw new ApiException(UmsErrorCode.ADMIN_NOT_FOUND);
+        }
+
+        // 1) 查用户角色ID
+        LambdaQueryWrapper<UmsAdminRoleRelation> arWrapper = new LambdaQueryWrapper<>();
+        arWrapper.eq(UmsAdminRoleRelation::getAdminId, adminId);
+        List<UmsAdminRoleRelation> relationList = umsAdminRoleRelationMapper.selectList(arWrapper);
+        List<Long> roleIds = relationList.stream().map(UmsAdminRoleRelation::getRoleId).toList();
+
+        // 2) 查角色名
+        List<String> roleNames = new java.util.ArrayList<>();
+        if (!roleIds.isEmpty()) {
+            List<UmsRole> roles = umsAdminMapper.selectRolesByIds(roleIds);
+            roleNames = roles.stream().map(UmsRole::getName).toList();
+        }
+
+        // 3) 查权限点（复用你现有动态权限查询）
+        List<String> authorities = getAuthorityList(admin.getUsername());
+
+        // 4) 组装返回
+        AdminPermissionSummaryDTO dto = new AdminPermissionSummaryDTO();
+        dto.setAdminId(admin.getId());
+        dto.setUsername(admin.getUsername());
+        dto.setRoleNames(roleNames);
+        dto.setAuthorities(authorities);
+        return dto;
+    }
+
+
+
+    /**
+     * 是否处于锁定中
+     */
+    private boolean isLocked(UmsAdmin admin) {
+        return admin.getLockExpireTime() != null
+                && admin.getLockExpireTime().isAfter(LocalDateTime.now());
+    }
+
+    /**
+     * 剩余锁定分钟数（向上取整）
+     */
+    private long remainLockMinutes(UmsAdmin admin) {
+        if (admin.getLockExpireTime() == null) {
+            return 0;
+        }
+        long seconds = java.time.Duration.between(LocalDateTime.now(), admin.getLockExpireTime()).getSeconds();
+        if (seconds <= 0) {
+            return 0;
+        }
+        return (seconds + 59) / 60;
+    }
+
 
 }

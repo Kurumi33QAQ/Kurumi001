@@ -20,4 +20,27 @@
           AND ur.name IS NOT NULL
     </select>
 
+    <select id="listRoleOptions" resultType="com.zsj.modules.ums.dto.OptionDTO">
+        SELECT id, name
+        FROM ums_role
+        ORDER BY id
+    </select>
+
+    <select id="listResourceOptions" resultType="com.zsj.modules.ums.dto.OptionDTO">
+        SELECT id, name
+        FROM ums_resource
+        ORDER BY id
+    </select>
+
+    <select id="selectRolesByIds" resultType="com.zsj.modules.ums.model.UmsRole">
+        SELECT id, name
+        FROM ums_role
+        WHERE id IN
+        <foreach collection="roleIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+
+
 </mapper>

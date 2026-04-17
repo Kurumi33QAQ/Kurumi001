@@ -30,4 +30,14 @@ public class UmsAdmin {
     private LocalDateTime createTime;
     private LocalDateTime loginTime;
     private Integer status;
+    /**
+     * 连续登录失败次数
+     */
+    private Integer loginFailCount;
+
+    /**
+     * 账号锁定截止时间（为空表示未锁定）
+     */
+    private LocalDateTime lockExpireTime;
+
 }
