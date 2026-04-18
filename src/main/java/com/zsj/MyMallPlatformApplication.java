@@ -7,7 +7,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @EnableScheduling
 @SpringBootApplication
-@MapperScan("com.zsj.modules.ums.mapper")
+@MapperScan("com.zsj.modules.**.mapper")
 public class MyMallPlatformApplication {
 
     public static void main(String[] args) {
