@@ -9,9 +9,23 @@ spring:
       port: 6379
       password:
       timeout: 3000ms
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
 
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/**/*.xml
   configuration:
     map-underscore-to-camel-case: true
+
+
+aliyun:
+  oss:
+    endpoint: https://oss-cn-beijing.aliyuncs.com
+    access-key-id: ${ALIYUN_ACCESS_KEY_ID:your-access-key-id}
+    access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:your-access-key-secret}
+    bucket-name: zsj-java-ai
+    public-base-url: https://zsj-java-ai.oss-cn-beijing.aliyuncs.com
+    dir-prefix: product

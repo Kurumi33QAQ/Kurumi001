@@ -5,3 +5,8 @@ out/
 *.log
 node_modules/
 dist/
+admin-web/node_modules/
+dist/
+build/
+target/
+.idea/

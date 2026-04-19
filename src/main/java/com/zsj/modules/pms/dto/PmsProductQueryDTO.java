@@ -1,8 +1,11 @@
 package com.zsj.modules.pms.dto;
 
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.Data;
+
+import java.math.BigDecimal;
 
 /**
  * 商品分页查询参数
@@ -32,4 +35,11 @@ public class PmsProductQueryDTO {
      * 上架状态（可选：0下架，1上架）
      */
     private Integer publishStatus;
+
+    @DecimalMin(value = "0.00", message = "最低价不能小于0")
+    private BigDecimal minPrice;
+
+    @DecimalMin(value = "0.00", message = "最高价不能小于0")
+    private BigDecimal maxPrice;
+
 }
