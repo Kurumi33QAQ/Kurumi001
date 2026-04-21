@@ -99,7 +99,7 @@ public class DemoController {
 
         AdminInfoDTO adminInfo = umsAdminService.login(dto.getUsername(), dto.getPassword(), ip, userAgent);
 
-        String token = jwtTokenUtil.generateToken(adminInfo.getUsername());
+        String token = jwtTokenUtil.generateToken(adminInfo.getUsername(), JwtTokenUtil.USER_TYPE_ADMIN);
 
         LoginResponseDTO response = new LoginResponseDTO();
         response.setToken(token);
@@ -270,6 +270,11 @@ public class DemoController {
 
         // 2) 提取旧 token
         String oldToken = authorization.substring(7);
+        String userType = jwtTokenUtil.getUserTypeFromToken(oldToken);
+        if (!JwtTokenUtil.USER_TYPE_ADMIN.equals(userType)) {
+            return CommonResult.unauthorized(null, "token 类型不匹配");
+        }
+
 
         // 3) 调用工具类刷新
         String newToken = jwtTokenUtil.refreshToken(oldToken);
@@ -302,6 +307,14 @@ public class DemoController {
         }
 
         String token = authorization.substring(7);
+
+        String userType = jwtTokenUtil.getUserTypeFromToken(token);
+        if (!JwtTokenUtil.USER_TYPE_ADMIN.equals(userType)) {
+            return CommonResult.unauthorized("token 类型不匹配");
+        }
+
+
+
         Long expireAtMillis = jwtTokenUtil.getExpireAtMillis(token);
 
         // token 无法解析时，也按未认证处理

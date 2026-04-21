@@ -48,8 +48,12 @@ public class SecurityConfig {
                                 "/demo/register/simple",
                                 "/demo/token/check",
                                 "/demo/logout",
-                                "/demo/token/refresh"
-                                ).permitAll()
+                                "/demo/token/refresh",
+                                "/member/auth/register",
+                                "/member/auth/login",
+                                "/member/auth/token/refresh",
+                                "/member/auth/logout"
+                        ).permitAll()
                         // 其他请求需要认证
                         .anyRequest().authenticated()
                 )

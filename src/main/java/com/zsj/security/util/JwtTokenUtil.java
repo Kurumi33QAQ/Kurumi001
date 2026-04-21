@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * JWT 工具类：
@@ -19,6 +21,10 @@ import java.util.Date;
 public class JwtTokenUtil {
 
     private final JwtProperties jwtProperties;
+    public static final String USER_TYPE_ADMIN = "ADMIN";
+    public static final String USER_TYPE_MEMBER = "MEMBER";
+    private static final String CLAIM_USER_TYPE = "userType";
+
 
     public JwtTokenUtil(JwtProperties jwtProperties) {
         this.jwtProperties = jwtProperties;
@@ -31,19 +37,32 @@ public class JwtTokenUtil {
         return Keys.hmacShaKeyFor(jwtProperties.getSecret().getBytes(StandardCharsets.UTF_8));
     }
 
-    /**
-     * 根据用户名生成 JWT
-     */
     public String generateToken(String username) {
+        // 保持兼容：旧调用不带 userType
+        return generateToken(username, null);
+    }
+
+    /**
+     * 根据用户名和用户类型生成 JWT
+     */
+    public String generateToken(String username, String userType) {
         Date now = new Date();
         Date expireDate = new Date(now.getTime() + jwtProperties.getExpiration() * 1000);
+
+        Map<String, Object> claims = new HashMap<>();
+        if (userType != null && !userType.isBlank()) {
+            claims.put(CLAIM_USER_TYPE, userType);
+        }
+
         return Jwts.builder()
+                .setClaims(claims)
                 .setSubject(username)
                 .setIssuedAt(now)
                 .setExpiration(expireDate)
                 .signWith(getSignKey(), SignatureAlgorithm.HS512)
                 .compact();
     }
+
 
     /**
      * 从 token 中解析用户名（subject）
@@ -52,6 +71,21 @@ public class JwtTokenUtil {
         Claims claims = getClaimsFromToken(token);
         return claims == null ? null : claims.getSubject();
     }
+
+
+    /**
+     * 从 token 中解析用户类型（ADMIN/MEMBER）
+     */
+    public String getUserTypeFromToken(String token) {
+        Claims claims = getClaimsFromToken(token);
+        if (claims == null) {
+            return null;
+        }
+        Object value = claims.get(CLAIM_USER_TYPE);
+        return value == null ? null : String.valueOf(value);
+    }
+
+
 
     /**
      * 判断 token 是否过期
@@ -109,8 +143,11 @@ public class JwtTokenUtil {
         if (username == null) {
             return null;
         }
-        return generateToken(username);
+
+        String userType = getUserTypeFromToken(oldToken);
+        return generateToken(username, userType);
     }
+
 
 
     /**
