@@ -52,7 +52,9 @@ public class SecurityConfig {
                                 "/member/auth/register",
                                 "/member/auth/login",
                                 "/member/auth/token/refresh",
-                                "/member/auth/logout"
+                                "/member/auth/logout",
+                                "/member/product/list",
+                                "/member/product/detail"
                         ).permitAll()
                         // 其他请求需要认证
                         .anyRequest().authenticated()

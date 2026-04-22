@@ -19,6 +19,7 @@ public enum UmsErrorCode implements IErrorCode {
     MEMBER_NOT_FOUND(41404, "买家用户不存在"),
     MEMBER_LOCKED(41010, "买家账号已锁定，请稍后再试"),
     MEMBER_LOCKED_BY_FAIL(41011, "买家密码错误次数过多，账号已锁定10分钟"),
+    ORDER_NOT_CANCELABLE(42001, "仅待支付订单可取消"),
     ADMIN_LOCKED_BY_FAIL(40011, "密码错误次数过多，账号已锁定10分钟");
 
 
