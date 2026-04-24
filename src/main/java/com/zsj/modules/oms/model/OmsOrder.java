@@ -1,5 +1,6 @@
 package com.zsj.modules.oms.model;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -23,4 +24,14 @@ public class OmsOrder {
     private Integer deleteStatus;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
+    @TableField("product_id")
+    private Long productId;
+
+    @TableField("product_quantity")
+    private Integer productQuantity;
+
+    @TableField("close_type")
+    private Integer closeType;
+
+
 }

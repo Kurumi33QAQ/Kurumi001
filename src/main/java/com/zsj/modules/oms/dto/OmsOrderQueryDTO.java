@@ -31,4 +31,12 @@ public class OmsOrderQueryDTO {
      * 订单状态（可选）
      */
     private Integer status;
+
+    /**
+     * 关闭类型（可选）：0未关闭,1用户取消,2超时关闭
+     */
+    @Min(value = 0, message = "关闭类型不能小于0")
+    @Max(value = 2, message = "关闭类型不能大于2")
+    private Integer closeType;
+
 }

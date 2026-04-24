@@ -20,6 +20,7 @@ public enum UmsErrorCode implements IErrorCode {
     MEMBER_LOCKED(41010, "买家账号已锁定，请稍后再试"),
     MEMBER_LOCKED_BY_FAIL(41011, "买家密码错误次数过多，账号已锁定10分钟"),
     ORDER_NOT_CANCELABLE(42001, "仅待支付订单可取消"),
+    ORDER_SUBMIT_DUPLICATE(42002, "订单正在创建，请勿重复提交"),
     ADMIN_LOCKED_BY_FAIL(40011, "密码错误次数过多，账号已锁定10分钟");
 
 

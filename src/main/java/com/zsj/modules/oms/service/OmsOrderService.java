@@ -36,4 +36,11 @@ public interface OmsOrderService {
      */
     void cancelOrder(String memberUsername, Long orderId);
 
+    /**
+     * 自动取消超时未支付订单
+     * @param timeoutMinutes 超时时间（分钟）
+     * @return 本次自动取消数量
+     */
+    int autoCancelTimeoutOrders(int timeoutMinutes);
+
 }
