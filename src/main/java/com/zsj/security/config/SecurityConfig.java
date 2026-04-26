@@ -54,7 +54,9 @@ public class SecurityConfig {
                                 "/member/auth/token/refresh",
                                 "/member/auth/logout",
                                 "/member/product/list",
-                                "/member/product/detail"
+                                "/member/product/detail",
+                                "/member/seckill/list",
+                                "/member/seckill/detail"
                         ).permitAll()
                         // 其他请求需要认证
                         .anyRequest().authenticated()
