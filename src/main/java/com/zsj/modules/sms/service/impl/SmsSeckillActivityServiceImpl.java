@@ -1,10 +1,12 @@
 package com.zsj.modules.sms.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zsj.common.api.ResultCode;
 import com.zsj.common.exception.ApiException;
+import com.zsj.modules.oms.service.OmsOrderService;
 import com.zsj.modules.sms.dto.SmsSeckillActivityQueryDTO;
 import com.zsj.modules.sms.dto.SmsSeckillSubmitDTO;
 import com.zsj.modules.sms.mapper.SmsSeckillActivityMapper;
@@ -16,9 +18,12 @@ import com.zsj.modules.ums.enums.UmsErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import com.zsj.modules.sms.dto.SmsSeckillActivityPortalDTO;
 import com.zsj.modules.sms.model.SmsSeckillActivityStatus;
+import com.zsj.modules.sms.model.SmsSeckillRecordStatus;
+
 
 import java.time.LocalDateTime;
 import java.util.concurrent.TimeUnit;
@@ -33,6 +38,8 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
 
     private final SmsSeckillActivityMapper smsSeckillActivityMapper;
     private final SmsSeckillRecordMapper smsSeckillRecordMapper;
+    private final OmsOrderService omsOrderService;
+
     private static final String SECKILL_STOCK_KEY_PREFIX = "sms:seckill:stock:";
     private static final long SECKILL_STOCK_TTL_HOURS = 24;
 
@@ -121,18 +128,22 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
     }
 
     /**
-     * 校验同一用户是否已经参与过同一秒杀活动
+     * 校验同一用户是否存在未关闭的秒杀记录
      */
     private void checkRepeatSeckill(String memberUsername, Long activityId) {
         LambdaQueryWrapper<SmsSeckillRecord> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(SmsSeckillRecord::getActivityId, activityId)
-                .eq(SmsSeckillRecord::getMemberUsername, memberUsername);
+                .eq(SmsSeckillRecord::getMemberUsername, memberUsername)
+                .in(SmsSeckillRecord::getStatus,
+                        SmsSeckillRecordStatus.QUALIFIED,
+                        SmsSeckillRecordStatus.ORDER_CREATED);
 
         Long count = smsSeckillRecordMapper.selectCount(wrapper);
         if (count != null && count > 0) {
             throw new ApiException(UmsErrorCode.SECKILL_REPEAT);
         }
     }
+
 
     /**
      * Redis 预扣秒杀库存
@@ -178,6 +189,27 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
         return SECKILL_STOCK_KEY_PREFIX + activityId;
     }
 
+    /**
+     * 同步增加秒杀活动已售数量
+     */
+    private void increaseActivitySoldCount(Long activityId, Integer quantity) {
+        if (activityId == null || quantity == null || quantity <= 0) {
+            throw new ApiException(ResultCode.VALIDATE_FAILED);
+        }
+
+        LambdaUpdateWrapper<SmsSeckillActivity> wrapper = new LambdaUpdateWrapper<>();
+        wrapper.eq(SmsSeckillActivity::getId, activityId)
+                .eq(SmsSeckillActivity::getDeleteStatus, 0)
+                .setSql("sold_count = sold_count + " + quantity)
+                .set(SmsSeckillActivity::getUpdateTime, LocalDateTime.now());
+
+        int rows = smsSeckillActivityMapper.update(null, wrapper);
+        if (rows <= 0) {
+            throw new ApiException(ResultCode.FAILED);
+        }
+    }
+
+
 
 
 
@@ -220,7 +252,8 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
      * 买家提交秒杀请求（基础版：活动规则校验）
      */
     @Override
-    public String submitSeckill(String memberUsername, SmsSeckillSubmitDTO dto) {
+    @Transactional(rollbackFor = Exception.class)
+    public Long submitSeckill(String memberUsername, SmsSeckillSubmitDTO dto) {
         if (!StringUtils.hasText(memberUsername) || dto == null
                 || dto.getActivityId() == null
                 || dto.getQuantity() == null
@@ -245,7 +278,7 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
         record.setActivityId(activity.getId());
         record.setMemberUsername(memberUsername);
         record.setQuantity(dto.getQuantity());
-        record.setStatus(0);
+        record.setStatus(SmsSeckillRecordStatus.QUALIFIED);
         record.setCreateTime(LocalDateTime.now());
         record.setUpdateTime(LocalDateTime.now());
 
@@ -259,7 +292,35 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
             throw e;
         }
 
-        return "秒杀资格获取成功，库存已预扣";
+        try {
+            Long orderId = omsOrderService.createSeckillOrder(
+                    memberUsername,
+                    activity.getId(),
+                    activity.getProductId(),
+                    activity.getSeckillPrice(),
+                    dto.getQuantity()
+            );
+
+            LambdaUpdateWrapper<SmsSeckillRecord> updateWrapper = new LambdaUpdateWrapper<>();
+            updateWrapper.eq(SmsSeckillRecord::getId, record.getId())
+                    .eq(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.QUALIFIED)
+                    .set(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.ORDER_CREATED)
+                    .set(SmsSeckillRecord::getOrderId, orderId)
+                    .set(SmsSeckillRecord::getUpdateTime, LocalDateTime.now());
+
+            int rows = smsSeckillRecordMapper.update(null, updateWrapper);
+            if (rows <= 0) {
+                throw new ApiException(ResultCode.FAILED);
+            }
+
+            increaseActivitySoldCount(activity.getId(), dto.getQuantity());
+
+            return orderId;
+        } catch (Exception e) {
+            rollbackSeckillStock(activity.getId(), dto.getQuantity());
+            throw e;
+        }
+
 
 
     }

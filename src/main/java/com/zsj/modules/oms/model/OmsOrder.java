@@ -33,5 +33,11 @@ public class OmsOrder {
     @TableField("close_type")
     private Integer closeType;
 
+    @TableField("order_type")
+    private Integer orderType;
+
+    @TableField("source_id")
+    private Long sourceId;
+
 
 }

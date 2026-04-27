@@ -44,14 +44,15 @@ public class SmsSeckillPortalController {
      * 提交秒杀请求
      */
     @PostMapping("/submit")
-    public CommonResult<String> submit(@Valid @RequestBody SmsSeckillSubmitDTO dto,
+    public CommonResult<Long> submit(@Valid @RequestBody SmsSeckillSubmitDTO dto,
                                        Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
             return CommonResult.unauthorized(null);
         }
 
-        String result = smsSeckillActivityService.submitSeckill(authentication.getName(), dto);
-        return CommonResult.success(result, "秒杀请求提交成功");
+        Long orderId = smsSeckillActivityService.submitSeckill(authentication.getName(), dto);
+        return CommonResult.success(orderId, "秒杀成功，订单已创建");
+
     }
 
 }

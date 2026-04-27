@@ -23,6 +23,7 @@ public interface SmsSeckillActivityService {
     /**
      * 买家提交秒杀请求（基础版骨架）
      */
-    String submitSeckill(String memberUsername, SmsSeckillSubmitDTO dto);
+    Long submitSeckill(String memberUsername, SmsSeckillSubmitDTO dto);
+
 
 }

@@ -10,9 +10,11 @@ import com.zsj.modules.oms.dto.OmsOrderStatusUpdateDTO;
 import com.zsj.modules.oms.mapper.OmsOrderMapper;
 import com.zsj.modules.oms.model.OmsOrder;
 import com.zsj.modules.oms.model.OmsOrderCloseType;
+import com.zsj.modules.oms.model.OmsOrderType;
 import com.zsj.modules.oms.service.OmsOrderService;
 import com.zsj.modules.pms.mapper.PmsProductMapper;
 import com.zsj.modules.pms.service.PmsProductService;
+import com.zsj.modules.sms.service.SmsSeckillCompensationService;
 import com.zsj.modules.ums.enums.UmsErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -40,6 +42,8 @@ public class OmsOrderServiceImpl implements OmsOrderService {
     private final OmsOrderMapper omsOrderMapper;
     private final PmsProductService pmsProductService;
     private final PmsProductMapper pmsProductMapper;
+    private final SmsSeckillCompensationService smsSeckillCompensationService;
+
 
 
 
@@ -173,6 +177,10 @@ public class OmsOrderServiceImpl implements OmsOrderService {
         order.setProductId(product.getId());
         order.setProductQuantity(dto.getQuantity());
         order.setCloseType(OmsOrderCloseType.NONE);
+        order.setOrderType(OmsOrderType.NORMAL);
+        order.setSourceId(null);
+
+
 
 
         int rows = omsOrderMapper.insert(order);
@@ -231,8 +239,9 @@ public class OmsOrderServiceImpl implements OmsOrderService {
             throw new ApiException(ResultCode.FAILED);
         }
 
-        // 取消成功后，回补库存（老订单可能没有productId/productQuantity，方法内会兜底跳过）
-        restoreStockOnCancel(order);
+        // 取消成功后，根据订单类型执行不同补偿
+        compensateAfterOrderClosed(order);
+
     }
 
 
@@ -240,6 +249,11 @@ public class OmsOrderServiceImpl implements OmsOrderService {
      * 取消订单后回补库存（基础版）
      */
     private void restoreStockOnCancel(OmsOrder order) {
+        if (order.getOrderType() != null && order.getOrderType() == OmsOrderType.SECKILL) {
+            return;
+        }
+
+
         if (order.getProductId() == null || order.getProductQuantity() == null || order.getProductQuantity() <= 0) {
             return;
         }
@@ -256,6 +270,25 @@ public class OmsOrderServiceImpl implements OmsOrderService {
             throw new ApiException(ResultCode.FAILED);
         }
     }
+
+
+    /**
+     * 订单关闭后根据订单类型执行补偿
+     */
+    private void compensateAfterOrderClosed(OmsOrder order) {
+        if (order.getOrderType() != null && order.getOrderType() == OmsOrderType.SECKILL) {
+            smsSeckillCompensationService.compensateClosedOrder(
+                    order.getSourceId(),
+                    order.getMemberUsername(),
+                    order.getId(),
+                    order.getProductQuantity()
+            );
+            return;
+        }
+
+        restoreStockOnCancel(order);
+    }
+
 
 
 
@@ -293,14 +326,65 @@ public class OmsOrderServiceImpl implements OmsOrderService {
 
             int rows = omsOrderMapper.update(null, updateWrapper);
             if (rows > 0) {
-                restoreStockOnCancel(order);
+                compensateAfterOrderClosed(order);
                 successCount++;
             }
+
         }
 
         return successCount;
     }
 
+
+    /**
+     * 创建秒杀订单（基础版：同步创建订单，不扣普通商品库存）
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long createSeckillOrder(String memberUsername,
+                                   Long activityId,
+                                   Long productId,
+                                   BigDecimal seckillPrice,
+                                   Integer quantity) {
+        if (!StringUtils.hasText(memberUsername)
+                || activityId == null
+                || productId == null
+                || seckillPrice == null
+                || quantity == null
+                || quantity < 1) {
+            throw new ApiException(ResultCode.VALIDATE_FAILED);
+        }
+
+        PmsProduct product = pmsProductService.getById(productId);
+        if (product.getPublishStatus() == null || product.getPublishStatus() != 1) {
+            throw new ApiException(UmsErrorCode.SECKILL_PRODUCT_INVALID);
+        }
+
+        BigDecimal totalAmount = seckillPrice.multiply(BigDecimal.valueOf(quantity));
+
+        OmsOrder order = new OmsOrder();
+        order.setOrderSn(generateOrderSn());
+        order.setMemberUsername(memberUsername);
+        order.setTotalAmount(totalAmount);
+        order.setPayAmount(totalAmount);
+        order.setStatus(OmsOrderStatus.PENDING_PAYMENT);
+        order.setNote("秒杀订单");
+        order.setDeleteStatus(0);
+        order.setCreateTime(LocalDateTime.now());
+        order.setUpdateTime(LocalDateTime.now());
+        order.setProductId(productId);
+        order.setProductQuantity(quantity);
+        order.setCloseType(OmsOrderCloseType.NONE);
+        order.setOrderType(OmsOrderType.SECKILL);
+        order.setSourceId(activityId);
+
+        int rows = omsOrderMapper.insert(order);
+        if (rows <= 0) {
+            throw new ApiException(ResultCode.FAILED);
+        }
+
+        return order.getId();
+    }
 
 
 }

@@ -6,6 +6,8 @@ import com.zsj.modules.oms.dto.OmsOrderQueryDTO;
 import com.zsj.modules.oms.dto.OmsOrderStatusUpdateDTO;
 import com.zsj.modules.oms.model.OmsOrder;
 
+import java.math.BigDecimal;
+
 /**
  * 订单业务接口
  */
@@ -42,5 +44,14 @@ public interface OmsOrderService {
      * @return 本次自动取消数量
      */
     int autoCancelTimeoutOrders(int timeoutMinutes);
+
+    /**
+     * 创建秒杀订单（基础版：同步创建订单，不扣普通商品库存）
+     */
+    Long createSeckillOrder(String memberUsername,
+                            Long activityId,
+                            Long productId,
+                            BigDecimal seckillPrice,
+                            Integer quantity);
 
 }
