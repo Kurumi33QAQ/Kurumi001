@@ -56,8 +56,9 @@ public class SecurityConfig {
                                 "/member/product/list",
                                 "/member/product/detail",
                                 "/member/seckill/list",
-                                "/member/seckill/detail"
-                        ).permitAll()
+                                "/member/seckill/detail",
+                                "/ws/member"
+                                ).permitAll()
                         // 其他请求需要认证
                         .anyRequest().authenticated()
                 )

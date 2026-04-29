@@ -16,6 +16,7 @@ import com.zsj.modules.pms.mapper.PmsProductMapper;
 import com.zsj.modules.pms.service.PmsProductService;
 import com.zsj.modules.sms.service.SmsSeckillCompensationService;
 import com.zsj.modules.ums.enums.UmsErrorCode;
+import com.zsj.modules.ums.service.UmsMemberNotificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +25,8 @@ import com.zsj.common.api.ResultCode;
 import com.zsj.common.exception.ApiException;
 import com.zsj.modules.pms.model.PmsProduct;
 import com.zsj.modules.oms.model.OmsOrderStatus;
+import com.zsj.modules.ums.model.UmsMemberNotificationType;
+
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -43,6 +46,7 @@ public class OmsOrderServiceImpl implements OmsOrderService {
     private final PmsProductService pmsProductService;
     private final PmsProductMapper pmsProductMapper;
     private final SmsSeckillCompensationService smsSeckillCompensationService;
+    private final UmsMemberNotificationService umsMemberNotificationService;
 
 
 
@@ -188,7 +192,17 @@ public class OmsOrderServiceImpl implements OmsOrderService {
             throw new ApiException(ResultCode.FAILED);
         }
 
+        // 订单创建成功后生成买家通知。通知先落库，后续再接 WebSocket 实时推送。
+        umsMemberNotificationService.createNotification(
+                memberUsername,
+                UmsMemberNotificationType.ORDER,
+                "订单创建成功",
+                "你的订单已创建成功，请尽快完成支付。",
+                order.getId()
+        );
+
         return order.getId();
+
     }
 
     /**

@@ -23,6 +23,9 @@ import org.springframework.util.StringUtils;
 import com.zsj.modules.sms.dto.SmsSeckillActivityPortalDTO;
 import com.zsj.modules.sms.model.SmsSeckillActivityStatus;
 import com.zsj.modules.sms.model.SmsSeckillRecordStatus;
+import com.zsj.modules.ums.model.UmsMemberNotificationType;
+import com.zsj.modules.ums.service.UmsMemberNotificationService;
+
 
 
 import java.time.LocalDateTime;
@@ -39,6 +42,7 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
     private final SmsSeckillActivityMapper smsSeckillActivityMapper;
     private final SmsSeckillRecordMapper smsSeckillRecordMapper;
     private final OmsOrderService omsOrderService;
+    private final UmsMemberNotificationService umsMemberNotificationService;
 
     private static final String SECKILL_STOCK_KEY_PREFIX = "sms:seckill:stock:";
     private static final long SECKILL_STOCK_TTL_HOURS = 24;
@@ -315,7 +319,17 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
 
             increaseActivitySoldCount(activity.getId(), dto.getQuantity());
 
+            // 秒杀成功后生成买家通知。此时订单、秒杀记录、已售数量都已经处理完成。
+            umsMemberNotificationService.createNotification(
+                    memberUsername,
+                    UmsMemberNotificationType.SECKILL,
+                    "秒杀成功",
+                    "恭喜你秒杀成功，订单已生成，请尽快完成支付。",
+                    orderId
+            );
+
             return orderId;
+
         } catch (Exception e) {
             rollbackSeckillStock(activity.getId(), dto.getQuantity());
             throw e;
