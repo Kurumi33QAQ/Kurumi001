@@ -16,6 +16,10 @@ import com.zsj.modules.ums.service.UmsMemberNotificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import com.zsj.modules.ums.websocket.MemberNotificationWebSocketSender;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 
 import java.time.LocalDateTime;
 
@@ -28,6 +32,7 @@ public class UmsMemberNotificationServiceImpl implements UmsMemberNotificationSe
 
     private final UmsMemberNotificationMapper notificationMapper;
     private final UmsMemberMapper umsMemberMapper;
+    private final MemberNotificationWebSocketSender memberNotificationWebSocketSender;
 
     /**
      * 创建通知时先根据用户名查询买家，保证通知一定归属于一个真实买家。
@@ -60,7 +65,11 @@ public class UmsMemberNotificationServiceImpl implements UmsMemberNotificationSe
             throw new ApiException(ResultCode.FAILED);
         }
 
+        // 通知先落库。事务提交后，如果买家在线，再通过 WebSocket 推送。
+        pushNotificationAfterCommit(member.getUsername(), notification);
+
         return notification.getId();
+
     }
 
     @Override
@@ -109,6 +118,30 @@ public class UmsMemberNotificationServiceImpl implements UmsMemberNotificationSe
 
         notificationMapper.update(null, wrapper);
     }
+
+
+    /**
+     * 在事务提交后推送通知。
+     *
+     * 为什么不在 insert 后立刻推送？
+     * 因为 createNotification 可能被订单、秒杀这类事务方法调用。
+     * 如果事务最后回滚了，但消息已经推给用户，就会出现“用户收到通知，但数据库没有记录”的问题。
+     */
+    private void pushNotificationAfterCommit(String memberUsername, UmsMemberNotification notification) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    memberNotificationWebSocketSender.sendNotification(memberUsername, notification);
+                }
+            });
+            return;
+        }
+
+        memberNotificationWebSocketSender.sendNotification(memberUsername, notification);
+    }
+
+
 
     private UmsMember getMemberByUsername(String memberUsername) {
         LambdaQueryWrapper<UmsMember> wrapper = new LambdaQueryWrapper<>();
