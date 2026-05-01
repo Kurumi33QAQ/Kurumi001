@@ -52,6 +52,35 @@ public class MemberNotificationWebSocketSender {
         }
     }
 
+
+    public void sendUnreadCount(String memberUsername, Long unreadCount) {
+        WebSocketSession session = sessionManager.get(memberUsername);
+        if (session == null || !session.isOpen()) {
+            return;
+        }
+
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("messageType", "UNREAD_COUNT_CHANGED");
+            payload.put("unreadCount", unreadCount);
+
+            String json = objectMapper.writeValueAsString(payload);
+
+            synchronized (session) {
+                if (session.isOpen()) {
+                    session.sendMessage(new TextMessage(json));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("WebSocket未读数推送失败，memberUsername={}, unreadCount={}",
+                    memberUsername,
+                    unreadCount,
+                    e);
+        }
+    }
+
+
+
     private Map<String, Object> buildPayload(UmsMemberNotification notification) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("messageType", "MEMBER_NOTIFICATION");

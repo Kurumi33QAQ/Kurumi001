@@ -66,7 +66,7 @@ public class UmsMemberNotificationServiceImpl implements UmsMemberNotificationSe
         }
 
         // 通知先落库。事务提交后，如果买家在线，再通过 WebSocket 推送。
-        pushNotificationAfterCommit(member.getUsername(), notification);
+        pushNotificationAndUnreadCountAfterCommit(member.getUsername(), notification);
 
         return notification.getId();
 
@@ -105,6 +105,7 @@ public class UmsMemberNotificationServiceImpl implements UmsMemberNotificationSe
                 .set(UmsMemberNotification::getReadTime, LocalDateTime.now());
 
         notificationMapper.update(null, wrapper);
+        pushUnreadCountAfterCommit(memberUsername);
     }
 
     @Override
@@ -117,6 +118,7 @@ public class UmsMemberNotificationServiceImpl implements UmsMemberNotificationSe
                 .set(UmsMemberNotification::getReadTime, LocalDateTime.now());
 
         notificationMapper.update(null, wrapper);
+        pushUnreadCountAfterCommit(memberUsername);
     }
 
 
@@ -127,19 +129,38 @@ public class UmsMemberNotificationServiceImpl implements UmsMemberNotificationSe
      * 因为 createNotification 可能被订单、秒杀这类事务方法调用。
      * 如果事务最后回滚了，但消息已经推给用户，就会出现“用户收到通知，但数据库没有记录”的问题。
      */
-    private void pushNotificationAfterCommit(String memberUsername, UmsMemberNotification notification) {
+    private void pushNotificationAndUnreadCountAfterCommit(String memberUsername, UmsMemberNotification notification) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
                     memberNotificationWebSocketSender.sendNotification(memberUsername, notification);
+                    memberNotificationWebSocketSender.sendUnreadCount(memberUsername, countUnread(memberUsername));
                 }
             });
             return;
         }
 
         memberNotificationWebSocketSender.sendNotification(memberUsername, notification);
+        memberNotificationWebSocketSender.sendUnreadCount(memberUsername, countUnread(memberUsername));
     }
+
+
+
+    private void pushUnreadCountAfterCommit(String memberUsername) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    memberNotificationWebSocketSender.sendUnreadCount(memberUsername, countUnread(memberUsername));
+                }
+            });
+            return;
+        }
+
+        memberNotificationWebSocketSender.sendUnreadCount(memberUsername, countUnread(memberUsername));
+    }
+
 
 
 
