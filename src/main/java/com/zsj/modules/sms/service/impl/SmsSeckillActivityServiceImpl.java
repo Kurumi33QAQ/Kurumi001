@@ -17,6 +17,7 @@ import com.zsj.modules.sms.service.SmsSeckillActivityService;
 import com.zsj.modules.ums.enums.UmsErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -29,6 +30,7 @@ import com.zsj.modules.ums.service.UmsMemberNotificationService;
 
 
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
 
@@ -45,9 +47,83 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
     private final UmsMemberNotificationService umsMemberNotificationService;
 
     private static final String SECKILL_STOCK_KEY_PREFIX = "sms:seckill:stock:";
-    private static final long SECKILL_STOCK_TTL_HOURS = 24;
+    private static final String SECKILL_USER_KEY_PREFIX = "sms:seckill:users:";
+    private static final long SECKILL_STOCK_TTL_SECONDS = 24 * 60 * 60;
+
+    private static final Long LUA_SUCCESS = 0L;
+    private static final Long LUA_STOCK_NOT_ENOUGH = 1L;
+    private static final Long LUA_REPEAT = 2L;
+    private static final Long LUA_INVALID_QUANTITY = 3L;
+
 
     private final StringRedisTemplate stringRedisTemplate;
+
+
+
+    /**
+     * 秒杀预扣库存 Lua 脚本。
+     *
+     * 返回码：
+     * 0 成功
+     * 1 库存不足
+     * 2 重复秒杀
+     * 3 购买数量非法
+     */
+    private static final String SECKILL_RESERVE_LUA = """
+        local stockKey = KEYS[1]
+        local userKey = KEYS[2]
+
+        local memberUsername = ARGV[1]
+        local quantity = tonumber(ARGV[2])
+        local initialStock = tonumber(ARGV[3])
+        local ttlSeconds = tonumber(ARGV[4])
+
+        if quantity == nil or quantity <= 0 then
+            return 3
+        end
+
+        if redis.call('EXISTS', stockKey) == 0 then
+            redis.call('SET', stockKey, initialStock)
+            redis.call('EXPIRE', stockKey, ttlSeconds)
+        end
+
+        if redis.call('SISMEMBER', userKey, memberUsername) == 1 then
+            return 2
+        end
+
+        local stock = tonumber(redis.call('GET', stockKey))
+        if stock == nil or stock < quantity then
+            return 1
+        end
+
+        redis.call('DECRBY', stockKey, quantity)
+        redis.call('SADD', userKey, memberUsername)
+        redis.call('EXPIRE', userKey, ttlSeconds)
+
+        return 0
+        """;
+
+    /**
+     * 秒杀库存回滚 Lua 脚本。
+     *
+     * 用于订单创建失败、订单取消、超时关闭后的 Redis 补偿。
+     */
+    private static final String SECKILL_ROLLBACK_LUA = """
+        local stockKey = KEYS[1]
+        local userKey = KEYS[2]
+
+        local memberUsername = ARGV[1]
+        local quantity = tonumber(ARGV[2])
+
+        if quantity == nil or quantity <= 0 then
+            return 0
+        end
+
+        redis.call('INCRBY', stockKey, quantity)
+        redis.call('SREM', userKey, memberUsername)
+
+        return 1
+        """;
 
 
 
@@ -132,7 +208,13 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
     }
 
     /**
-     * 校验同一用户是否存在未关闭的秒杀记录
+     * 数据库层重复秒杀校验（基础版方案）。
+     *
+     * 当前 Lua 优化版已把重复校验前置到 Redis：
+     * sms:seckill:users:{activityId}
+     *
+     * 因此 submitSeckill 主流程暂时不调用该方法。
+     * 保留它用于兜底方案说明，或后续 Redis 异常降级时使用。
      */
     private void checkRepeatSeckill(String memberUsername, Long activityId) {
         LambdaQueryWrapper<SmsSeckillRecord> wrapper = new LambdaQueryWrapper<>();
@@ -150,48 +232,87 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
 
 
     /**
-     * Redis 预扣秒杀库存
+     * 使用 Lua 原子预扣秒杀库存。
+     *
+     * Lua 内部一次完成：
+     * 1. 初始化库存
+     * 2. 判断用户是否重复秒杀
+     * 3. 判断库存是否充足
+     * 4. 扣减库存
+     * 5. 记录用户已抢
      */
-    private boolean reserveSeckillStock(SmsSeckillActivity activity, Integer quantity) {
-        String stockKey = buildSeckillStockKey(activity.getId());
+    private void reserveSeckillStock(String memberUsername, SmsSeckillActivity activity, Integer quantity) {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptText(SECKILL_RESERVE_LUA);
+        script.setResultType(Long.class);
 
-        // 首次访问时用数据库库存初始化 Redis 库存。
-        Boolean hasKey = stringRedisTemplate.hasKey(stockKey);
-        if (!Boolean.TRUE.equals(hasKey)) {
-            stringRedisTemplate.opsForValue().set(
-                    stockKey,
-                    String.valueOf(activity.getSeckillStock()),
-                    SECKILL_STOCK_TTL_HOURS,
-                    TimeUnit.HOURS
-            );
-        }
+        Long result = stringRedisTemplate.execute(
+                script,
+                Arrays.asList(
+                        buildSeckillStockKey(activity.getId()),
+                        buildSeckillUserKey(activity.getId())
+                ),
+                memberUsername,
+                String.valueOf(quantity),
+                String.valueOf(activity.getSeckillStock()),
+                String.valueOf(SECKILL_STOCK_TTL_SECONDS)
+        );
 
-        Long remainStock = stringRedisTemplate.opsForValue().decrement(stockKey, quantity);
-        if (remainStock == null) {
-            return false;
-        }
-
-        if (remainStock < 0) {
-            rollbackSeckillStock(activity.getId(), quantity);
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * 回滚 Redis 秒杀库存
-     */
-    private void rollbackSeckillStock(Long activityId, Integer quantity) {
-        if (activityId == null || quantity == null || quantity <= 0) {
+        if (LUA_SUCCESS.equals(result)) {
             return;
         }
-        stringRedisTemplate.opsForValue().increment(buildSeckillStockKey(activityId), quantity);
+
+        if (LUA_STOCK_NOT_ENOUGH.equals(result)) {
+            throw new ApiException(UmsErrorCode.SECKILL_STOCK_NOT_ENOUGH);
+        }
+
+        if (LUA_REPEAT.equals(result)) {
+            throw new ApiException(UmsErrorCode.SECKILL_REPEAT);
+        }
+
+        if (LUA_INVALID_QUANTITY.equals(result)) {
+            throw new ApiException(ResultCode.VALIDATE_FAILED);
+        }
+
+        throw new ApiException(ResultCode.FAILED);
     }
+
+
+    /**
+     * 回滚 Redis 秒杀预扣。
+     *
+     * 不只恢复库存，还要移除用户已抢标记。
+     * 否则用户取消订单后，即使库存恢复，也仍然会被 Redis 判断为重复秒杀。
+     */
+    private void rollbackSeckillStock(Long activityId, String memberUsername, Integer quantity) {
+        if (activityId == null || !StringUtils.hasText(memberUsername) || quantity == null || quantity <= 0) {
+            return;
+        }
+
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptText(SECKILL_ROLLBACK_LUA);
+        script.setResultType(Long.class);
+
+        stringRedisTemplate.execute(
+                script,
+                Arrays.asList(
+                        buildSeckillStockKey(activityId),
+                        buildSeckillUserKey(activityId)
+                ),
+                memberUsername,
+                String.valueOf(quantity)
+        );
+    }
+
 
     private String buildSeckillStockKey(Long activityId) {
         return SECKILL_STOCK_KEY_PREFIX + activityId;
     }
+
+    private String buildSeckillUserKey(Long activityId) {
+        return SECKILL_USER_KEY_PREFIX + activityId;
+    }
+
 
     /**
      * 同步增加秒杀活动已售数量
@@ -253,7 +374,9 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
     }
 
     /**
-     * 买家提交秒杀请求（基础版：活动规则校验）
+     * Lua 已经完成 Redis 层防重复，这里不再前置查询数据库，减少秒杀入口数据库压力。
+     * 数据库插入异常仍然保留兜底，防止 Redis 状态异常导致重复记录。
+     * checkRepeatSeckill(memberUsername, dto.getActivityId());
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -271,12 +394,11 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
             throw new ApiException(ResultCode.VALIDATE_FAILED);
         }
 
-        checkRepeatSeckill(memberUsername, dto.getActivityId());
+        // Lua 已经完成 Redis 层防重复，这里不再前置查询数据库，减少秒杀入口数据库压力。
+        // checkRepeatSeckill(memberUsername, dto.getActivityId());
 
-        boolean stockReserved = reserveSeckillStock(activity, dto.getQuantity());
-        if (!stockReserved) {
-            throw new ApiException(UmsErrorCode.SECKILL_STOCK_NOT_ENOUGH);
-        }
+
+        reserveSeckillStock(memberUsername, activity, dto.getQuantity());
 
         SmsSeckillRecord record = new SmsSeckillRecord();
         record.setActivityId(activity.getId());
@@ -289,10 +411,10 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
         try {
             smsSeckillRecordMapper.insert(record);
         } catch (org.springframework.dao.DuplicateKeyException e) {
-            rollbackSeckillStock(activity.getId(), dto.getQuantity());
+            rollbackSeckillStock(activity.getId(), memberUsername, dto.getQuantity());
             throw new ApiException(UmsErrorCode.SECKILL_REPEAT);
         } catch (Exception e) {
-            rollbackSeckillStock(activity.getId(), dto.getQuantity());
+            rollbackSeckillStock(activity.getId(), memberUsername, dto.getQuantity());
             throw e;
         }
 
@@ -331,7 +453,7 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
             return orderId;
 
         } catch (Exception e) {
-            rollbackSeckillStock(activity.getId(), dto.getQuantity());
+            rollbackSeckillStock(activity.getId(), memberUsername, dto.getQuantity());
             throw e;
         }
 
