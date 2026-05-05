@@ -10,6 +10,12 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.zsj.modules.sms.component.SeckillOrderMessageProducer;
+import com.zsj.modules.sms.dto.SeckillOrderMessage;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
 
 import java.util.List;
 
@@ -24,6 +30,7 @@ public class DevDebugController {
 
     private final UmsAdminService umsAdminService;
     private final TokenBlacklistService tokenBlacklistService;
+    private final SeckillOrderMessageProducer seckillOrderMessageProducer;
 
 
     /**
@@ -76,5 +83,27 @@ public class DevDebugController {
         return CommonResult.success(removed, "手动清理黑名单成功");
     }
 
+
+    /**
+     * 发送一条秒杀 MQ 测试消息。
+     *
+     * 仅用于开发环境验证 RabbitMQ 通道是否可用。
+     */
+    @PostMapping("/demo/seckill/mq/send-test")
+    public CommonResult<String> sendSeckillMqTest(@RequestParam(defaultValue = "1") Long activityId,
+                                                  @RequestParam(defaultValue = "700010") Long productId,
+                                                  @RequestParam(defaultValue = "buyer_001") String memberUsername) {
+        SeckillOrderMessage message = new SeckillOrderMessage();
+        message.setRecordId(System.currentTimeMillis());
+        message.setActivityId(activityId);
+        message.setProductId(productId);
+        message.setMemberUsername(memberUsername);
+        message.setQuantity(1);
+        message.setSeckillPrice(new BigDecimal("9.90"));
+        message.setCreateTime(LocalDateTime.now());
+
+        seckillOrderMessageProducer.sendSeckillOrderMessage(message);
+        return CommonResult.success("秒杀 MQ 测试消息发送成功");
+    }
 
 }
