@@ -50,8 +50,8 @@ public class SmsSeckillPortalController {
             return CommonResult.unauthorized(null);
         }
 
-        Long orderId = smsSeckillActivityService.submitSeckill(authentication.getName(), dto);
-        return CommonResult.success(orderId, "秒杀成功，订单已创建");
+        Long recordId = smsSeckillActivityService.submitSeckill(authentication.getName(), dto);
+        return CommonResult.success(recordId, "秒杀请求已受理，请等待处理结果");
 
     }
 

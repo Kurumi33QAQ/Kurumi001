@@ -27,4 +27,14 @@ public final class SmsSeckillRecordStatus {
      * 已取消或已关闭，库存已补偿
      */
     public static final int CLOSED = 3;
+
+    /**
+     * 异步下单处理中：Redis 已预扣成功，等待 MQ 消费者创建订单
+     */
+    public static final int PROCESSING = 4;
+
+    /**
+     * 消费者已抢占该记录，正在创建订单
+     */
+    public static final int CREATING = 5;
 }

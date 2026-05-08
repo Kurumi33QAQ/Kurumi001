@@ -7,14 +7,18 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zsj.common.api.ResultCode;
 import com.zsj.common.exception.ApiException;
 import com.zsj.modules.oms.service.OmsOrderService;
+import com.zsj.modules.sms.component.SeckillOrderMessageProducer;
 import com.zsj.modules.sms.dto.SmsSeckillActivityQueryDTO;
 import com.zsj.modules.sms.dto.SmsSeckillSubmitDTO;
+import com.zsj.modules.sms.dto.SeckillOrderMessage;
 import com.zsj.modules.sms.mapper.SmsSeckillActivityMapper;
 import com.zsj.modules.sms.mapper.SmsSeckillRecordMapper;
 import com.zsj.modules.sms.model.SmsSeckillActivity;
 import com.zsj.modules.sms.model.SmsSeckillRecord;
 import com.zsj.modules.sms.service.SmsSeckillActivityService;
 import com.zsj.modules.ums.enums.UmsErrorCode;
+import com.zsj.modules.ums.model.UmsMemberNotificationType;
+import com.zsj.modules.ums.service.UmsMemberNotificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -24,14 +28,11 @@ import org.springframework.util.StringUtils;
 import com.zsj.modules.sms.dto.SmsSeckillActivityPortalDTO;
 import com.zsj.modules.sms.model.SmsSeckillActivityStatus;
 import com.zsj.modules.sms.model.SmsSeckillRecordStatus;
-import com.zsj.modules.ums.model.UmsMemberNotificationType;
-import com.zsj.modules.ums.service.UmsMemberNotificationService;
 
 
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
-import java.util.concurrent.TimeUnit;
 
 
 /**
@@ -43,6 +44,7 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
 
     private final SmsSeckillActivityMapper smsSeckillActivityMapper;
     private final SmsSeckillRecordMapper smsSeckillRecordMapper;
+    private final SeckillOrderMessageProducer seckillOrderMessageProducer;
     private final OmsOrderService omsOrderService;
     private final UmsMemberNotificationService umsMemberNotificationService;
 
@@ -394,17 +396,14 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
             throw new ApiException(ResultCode.VALIDATE_FAILED);
         }
 
-        // Lua 已经完成 Redis 层防重复，这里不再前置查询数据库，减少秒杀入口数据库压力。
-        // checkRepeatSeckill(memberUsername, dto.getActivityId());
-
-
+        // Lua 已经完成 Redis 层防重复和预扣库存，这里不再前置查询数据库，减少秒杀入口数据库压力。
         reserveSeckillStock(memberUsername, activity, dto.getQuantity());
 
         SmsSeckillRecord record = new SmsSeckillRecord();
         record.setActivityId(activity.getId());
         record.setMemberUsername(memberUsername);
         record.setQuantity(dto.getQuantity());
-        record.setStatus(SmsSeckillRecordStatus.QUALIFIED);
+        record.setStatus(SmsSeckillRecordStatus.PROCESSING);
         record.setCreateTime(LocalDateTime.now());
         record.setUpdateTime(LocalDateTime.now());
 
@@ -419,46 +418,116 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
         }
 
         try {
-            Long orderId = omsOrderService.createSeckillOrder(
-                    memberUsername,
-                    activity.getId(),
-                    activity.getProductId(),
-                    activity.getSeckillPrice(),
-                    dto.getQuantity()
-            );
+            SeckillOrderMessage message = new SeckillOrderMessage();
+            message.setRecordId(record.getId());
+            message.setActivityId(activity.getId());
+            message.setProductId(activity.getProductId());
+            message.setMemberUsername(memberUsername);
+            message.setQuantity(dto.getQuantity());
+            message.setSeckillPrice(activity.getSeckillPrice());
+            message.setCreateTime(LocalDateTime.now());
 
-            LambdaUpdateWrapper<SmsSeckillRecord> updateWrapper = new LambdaUpdateWrapper<>();
-            updateWrapper.eq(SmsSeckillRecord::getId, record.getId())
-                    .eq(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.QUALIFIED)
-                    .set(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.ORDER_CREATED)
-                    .set(SmsSeckillRecord::getOrderId, orderId)
-                    .set(SmsSeckillRecord::getUpdateTime, LocalDateTime.now());
-
-            int rows = smsSeckillRecordMapper.update(null, updateWrapper);
-            if (rows <= 0) {
-                throw new ApiException(ResultCode.FAILED);
-            }
-
-            increaseActivitySoldCount(activity.getId(), dto.getQuantity());
-
-            // 秒杀成功后生成买家通知。此时订单、秒杀记录、已售数量都已经处理完成。
-            umsMemberNotificationService.createNotification(
-                    memberUsername,
-                    UmsMemberNotificationType.SECKILL,
-                    "秒杀成功",
-                    "恭喜你秒杀成功，订单已生成，请尽快完成支付。",
-                    orderId
-            );
-
-            return orderId;
-
+            seckillOrderMessageProducer.sendSeckillOrderMessage(message);
+            return record.getId();
         } catch (Exception e) {
             rollbackSeckillStock(activity.getId(), memberUsername, dto.getQuantity());
             throw e;
         }
+    }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void createOrderFromMessage(SeckillOrderMessage message) {
+        if (message == null
+                || message.getRecordId() == null
+                || message.getActivityId() == null
+                || message.getProductId() == null
+                || !StringUtils.hasText(message.getMemberUsername())
+                || message.getQuantity() == null
+                || message.getQuantity() < 1
+                || message.getSeckillPrice() == null) {
+            throw new ApiException(ResultCode.VALIDATE_FAILED);
+        }
 
+        // 先抢占秒杀记录，避免 RabbitMQ 重投或多个消费者并发时重复创建订单。
+        LambdaUpdateWrapper<SmsSeckillRecord> claimWrapper = new LambdaUpdateWrapper<>();
+        claimWrapper.eq(SmsSeckillRecord::getId, message.getRecordId())
+                .eq(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.PROCESSING)
+                .set(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.CREATING)
+                .set(SmsSeckillRecord::getUpdateTime, LocalDateTime.now());
 
+        int claimRows = smsSeckillRecordMapper.update(null, claimWrapper);
+        if (claimRows <= 0) {
+            return;
+        }
+
+        Long orderId;
+        try {
+            SmsSeckillRecord record = smsSeckillRecordMapper.selectById(message.getRecordId());
+            if (record == null
+                    || !message.getActivityId().equals(record.getActivityId())
+                    || !message.getMemberUsername().equals(record.getMemberUsername())
+                    || !message.getQuantity().equals(record.getQuantity())) {
+                throw new ApiException(ResultCode.FAILED);
+            }
+
+            orderId = omsOrderService.createSeckillOrder(
+                    message.getMemberUsername(),
+                    message.getActivityId(),
+                    message.getProductId(),
+                    message.getSeckillPrice(),
+                    message.getQuantity()
+            );
+        } catch (Exception e) {
+            failSeckillOrderMessage(message);
+            return;
+        }
+
+        LambdaUpdateWrapper<SmsSeckillRecord> finishWrapper = new LambdaUpdateWrapper<>();
+        finishWrapper.eq(SmsSeckillRecord::getId, message.getRecordId())
+                .eq(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.CREATING)
+                .set(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.ORDER_CREATED)
+                .set(SmsSeckillRecord::getOrderId, orderId)
+                .set(SmsSeckillRecord::getUpdateTime, LocalDateTime.now());
+
+        int finishRows = smsSeckillRecordMapper.update(null, finishWrapper);
+        if (finishRows <= 0) {
+            throw new ApiException(ResultCode.FAILED);
+        }
+
+        increaseActivitySoldCount(message.getActivityId(), message.getQuantity());
+
+        umsMemberNotificationService.createNotification(
+                message.getMemberUsername(),
+                UmsMemberNotificationType.SECKILL,
+                "秒杀成功",
+                "恭喜你秒杀成功，订单已生成，请尽快完成支付。",
+                orderId
+        );
+    }
+
+    /**
+     * 秒杀异步下单失败补偿。
+     *
+     * 这里处理的是“订单尚未创建成功”的失败：标记秒杀记录失败，并回滚 Redis 预扣库存和用户参与标记。
+     */
+    private void failSeckillOrderMessage(SeckillOrderMessage message) {
+        LambdaUpdateWrapper<SmsSeckillRecord> failWrapper = new LambdaUpdateWrapper<>();
+        failWrapper.eq(SmsSeckillRecord::getId, message.getRecordId())
+                .eq(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.CREATING)
+                .set(SmsSeckillRecord::getStatus, SmsSeckillRecordStatus.FAILED)
+                .set(SmsSeckillRecord::getUpdateTime, LocalDateTime.now());
+        smsSeckillRecordMapper.update(null, failWrapper);
+
+        rollbackSeckillStock(message.getActivityId(), message.getMemberUsername(), message.getQuantity());
+
+        umsMemberNotificationService.createNotification(
+                message.getMemberUsername(),
+                UmsMemberNotificationType.SECKILL,
+                "秒杀失败",
+                "很抱歉，本次秒杀下单失败，预扣库存已恢复，你可以稍后再试。",
+                message.getRecordId()
+        );
     }
 
 

@@ -4,6 +4,7 @@ import com.zsj.common.api.CommonResult;
 import com.zsj.modules.ums.service.UmsAdminService;
 import com.zsj.security.component.TokenBlacklistService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,13 +12,17 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.zsj.modules.sms.component.SeckillOrderMessageProducer;
+import com.zsj.modules.sms.config.SeckillRabbitMqConfig;
 import com.zsj.modules.sms.dto.SeckillOrderMessage;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 
 
 import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 
 /**
  * 开发环境调试接口：
@@ -31,6 +36,7 @@ public class DevDebugController {
     private final UmsAdminService umsAdminService;
     private final TokenBlacklistService tokenBlacklistService;
     private final SeckillOrderMessageProducer seckillOrderMessageProducer;
+    private final RabbitAdmin rabbitAdmin;
 
 
     /**
@@ -104,6 +110,35 @@ public class DevDebugController {
 
         seckillOrderMessageProducer.sendSeckillOrderMessage(message);
         return CommonResult.success("秒杀 MQ 测试消息发送成功");
+    }
+
+    /**
+     * 查询秒杀 MQ 队列消息数量。
+     *
+     * 用于开发阶段观察正常队列和死信队列是否有积压消息。
+     */
+    @GetMapping("/demo/seckill/mq/queue-size")
+    public CommonResult<Map<String, Object>> seckillMqQueueSize() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put(SeckillRabbitMqConfig.SECKILL_ORDER_QUEUE,
+                getQueueMessageCount(SeckillRabbitMqConfig.SECKILL_ORDER_QUEUE));
+        result.put(SeckillRabbitMqConfig.SECKILL_ORDER_DEAD_QUEUE,
+                getQueueMessageCount(SeckillRabbitMqConfig.SECKILL_ORDER_DEAD_QUEUE));
+        return CommonResult.success(result, "获取秒杀 MQ 队列消息数量成功");
+    }
+
+    private Long getQueueMessageCount(String queueName) {
+        Properties properties = rabbitAdmin.getQueueProperties(queueName);
+        if (properties == null) {
+            return null;
+        }
+
+        Object count = properties.get(RabbitAdmin.QUEUE_MESSAGE_COUNT);
+        if (count instanceof Number number) {
+            return number.longValue();
+        }
+
+        return null;
     }
 
 }
