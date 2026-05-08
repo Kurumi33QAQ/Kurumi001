@@ -12,8 +12,11 @@ import com.zsj.modules.sms.dto.SmsSeckillActivityQueryDTO;
 import com.zsj.modules.sms.dto.SmsSeckillSubmitDTO;
 import com.zsj.modules.sms.dto.SeckillOrderMessage;
 import com.zsj.modules.sms.mapper.SmsSeckillActivityMapper;
+import com.zsj.modules.sms.mapper.SmsSeckillMqFailLogMapper;
 import com.zsj.modules.sms.mapper.SmsSeckillRecordMapper;
 import com.zsj.modules.sms.model.SmsSeckillActivity;
+import com.zsj.modules.sms.model.SmsSeckillMqFailLog;
+import com.zsj.modules.sms.model.SmsSeckillMqFailLogHandleStatus;
 import com.zsj.modules.sms.model.SmsSeckillRecord;
 import com.zsj.modules.sms.service.SmsSeckillActivityService;
 import com.zsj.modules.ums.enums.UmsErrorCode;
@@ -47,6 +50,7 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
     private final SeckillOrderMessageProducer seckillOrderMessageProducer;
     private final OmsOrderService omsOrderService;
     private final UmsMemberNotificationService umsMemberNotificationService;
+    private final SmsSeckillMqFailLogMapper smsSeckillMqFailLogMapper;
 
     private static final String SECKILL_STOCK_KEY_PREFIX = "sms:seckill:stock:";
     private static final String SECKILL_USER_KEY_PREFIX = "sms:seckill:users:";
@@ -504,6 +508,26 @@ public class SmsSeckillActivityServiceImpl implements SmsSeckillActivityService 
                 "恭喜你秒杀成功，订单已生成，请尽快完成支付。",
                 orderId
         );
+
+        markFailLogSuccessIfNecessary(message);
+    }
+
+    /**
+     * 重投消息处理成功后，回写失败日志状态。
+     *
+     * 普通秒杀消息没有 failLogId，不会进入这个逻辑。
+     */
+    private void markFailLogSuccessIfNecessary(SeckillOrderMessage message) {
+        if (message.getFailLogId() == null) {
+            return;
+        }
+
+        LambdaUpdateWrapper<SmsSeckillMqFailLog> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(SmsSeckillMqFailLog::getId, message.getFailLogId())
+                .set(SmsSeckillMqFailLog::getHandleStatus, SmsSeckillMqFailLogHandleStatus.SUCCESS)
+                .set(SmsSeckillMqFailLog::getHandleRemark, "重投消息已成功创建秒杀订单")
+                .set(SmsSeckillMqFailLog::getUpdateTime, LocalDateTime.now());
+        smsSeckillMqFailLogMapper.update(null, updateWrapper);
     }
 
     /**

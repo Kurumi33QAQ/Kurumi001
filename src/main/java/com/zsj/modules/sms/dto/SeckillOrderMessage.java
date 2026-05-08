@@ -20,6 +20,14 @@ public class SeckillOrderMessage {
      */
     private Long recordId;
 
+    /**
+     * 失败日志ID。
+     *
+     * 正常秒杀消息为空；从失败日志手动重投时会携带该字段，
+     * 后续消费者处理成功后可据此回写失败日志状态。
+     */
+    private Long failLogId;
+
     private Long activityId;
 
     private Long productId;

@@ -1,4 +1,4 @@
-import { request } from "@/api/http";
+﻿import { request } from "@/api/http";
 
 const IMAGE_UPLOAD_API = (import.meta.env.VITE_IMAGE_UPLOAD_API || "").trim();
 const OSS_PUBLIC_BASE_URL = (import.meta.env.VITE_OSS_PUBLIC_BASE_URL || "").trim();
@@ -57,3 +57,5 @@ export async function uploadImageApi(file: File) {
 
   throw new Error("上传接口未返回可用图片地址");
 }
+
+

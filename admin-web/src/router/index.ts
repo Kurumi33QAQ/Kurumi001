@@ -7,13 +7,25 @@ const routes: RouteRecordRaw[] = [
     path: "/login",
     name: "Login",
     component: () => import("@/views/login/LoginView.vue"),
-    meta: { public: true }
+    meta: { public: true, title: "MyMall 管理后台登录" }
   },
   {
     path: "/403",
     name: "Forbidden",
     component: () => import("@/views/error/ForbiddenView.vue"),
-    meta: { public: true }
+    meta: { public: true, title: "无权限访问 - MyMall 管理后台" }
+  },
+  {
+    path: "/mall/login",
+    name: "MemberLogin",
+    component: () => import("@/views/member/MemberLoginView.vue"),
+    meta: { public: true, title: "会员登录 - MyMall 精选商城" }
+  },
+  {
+    path: "/mall",
+    name: "MemberMall",
+    component: () => import("@/views/member/MemberMallView.vue"),
+    meta: { public: true, title: "MyMall 精选商城" }
   },
   {
     path: "/",
@@ -23,31 +35,32 @@ const routes: RouteRecordRaw[] = [
       {
         path: "dashboard",
         name: "Dashboard",
-        component: () => import("@/views/dashboard/DashboardView.vue")
+        component: () => import("@/views/dashboard/DashboardView.vue"),
+        meta: { title: "工作台 - MyMall 管理后台" }
       },
       {
         path: "product",
         name: "Product",
         component: () => import("@/views/product/ProductManageView.vue"),
-        meta: { permission: "pms:product:read" }
+        meta: { permission: "pms:product:read", title: "商品管理 - MyMall 管理后台" }
       },
       {
         path: "order",
         name: "Order",
         component: () => import("@/views/order/OrderManageView.vue"),
-        meta: { permission: "oms:order:read" }
+        meta: { permission: "oms:order:read", title: "订单管理 - MyMall 管理后台" }
       },
       {
         path: "rbac",
         name: "RBAC",
         component: () => import("@/views/rbac/RbacManageView.vue"),
-        meta: { permission: "admin:read" }
+        meta: { permission: "admin:read", title: "权限管理 - MyMall 管理后台" }
       },
       {
         path: "login-log",
         name: "LoginLog",
         component: () => import("@/views/log/LoginLogView.vue"),
-        meta: { permission: "admin:read" }
+        meta: { permission: "admin:read", title: "登录日志 - MyMall 管理后台" }
       }
     ]
   },
@@ -89,6 +102,10 @@ router.beforeEach(async (to) => {
   }
 
   return true;
+});
+
+router.afterEach((to) => {
+  document.title = (to.meta.title as string | undefined) || "MyMall";
 });
 
 export default router;

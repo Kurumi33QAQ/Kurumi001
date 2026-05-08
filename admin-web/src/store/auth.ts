@@ -1,4 +1,4 @@
-import { defineStore } from "pinia";
+﻿import { defineStore } from "pinia";
 import { ElMessage } from "element-plus";
 import { authoritiesApi, getMeApi, loginApi, logoutApi, permissionSummaryApi, registerApi } from "@/api/modules/auth";
 import type { AdminInfo, LoginRequest } from "@/types/auth";
@@ -48,7 +48,7 @@ export const useAuthStore = defineStore("auth", {
         const summary = await permissionSummaryApi(me.id);
         this.authorities = summary.authorities || [];
       } catch {
-        // dev 模式兜底接口，避免权限列表为空导致菜单全隐藏
+        // 开发阶段兜底：权限汇总接口不可用时，仍尝试读取当前用户权限点。
         try {
           this.authorities = await authoritiesApi();
         } catch {
@@ -66,7 +66,7 @@ export const useAuthStore = defineStore("auth", {
     async login(payload: LoginRequest) {
       const data = await loginApi(payload);
       if (!data?.token) {
-        throw new Error("登录失败，未返回 token");
+        throw new Error("登录失败，未返回访问凭证");
       }
       this.token = data.token;
       setAccessToken(data.token);
@@ -78,7 +78,7 @@ export const useAuthStore = defineStore("auth", {
       try {
         await logoutApi();
       } catch {
-        // 忽略退出接口失败，确保本地状态已清空
+        // 即使退出接口临时失败，也优先清理本地登录状态，避免继续误操作。
       } finally {
         this.clearAuth();
       }

@@ -1,20 +1,15 @@
 ﻿import axios, { type AxiosError, type AxiosInstance, type AxiosRequestConfig, type InternalAxiosRequestConfig } from "axios";
 import { ElMessage } from "element-plus";
 import type { ApiResponse } from "@/types/api";
-import { clearAccessToken, getAccessToken, setAccessToken } from "@/utils/auth";
-
-type UnauthorizedHandler = () => void;
+import { clearMemberAccessToken, getMemberAccessToken, setMemberAccessToken } from "@/utils/memberAuth";
 
 const rawBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").trim();
 const BASE_URL = !rawBaseUrl || rawBaseUrl.includes("/demo/file/upload") ? "/api" : rawBaseUrl;
 
-const service: AxiosInstance = axios.create({
+const memberService: AxiosInstance = axios.create({
   baseURL: BASE_URL,
   timeout: 12000
 });
-
-let unauthorizedHandler: UnauthorizedHandler | null = null;
-let refreshPromise: Promise<string> | null = null;
 
 type RetryRequestConfig = InternalAxiosRequestConfig & {
   _retry?: boolean;
@@ -22,10 +17,6 @@ type RetryRequestConfig = InternalAxiosRequestConfig & {
 
 function isWrappedApiResponse(data: unknown): data is ApiResponse<unknown> {
   return Boolean(data && typeof data === "object" && "code" in data && "message" in data);
-}
-
-function isRefreshRequest(url?: string) {
-  return Boolean(url?.includes("/demo/token/refresh"));
 }
 
 function normalizeBizCode(code: unknown) {
@@ -37,27 +28,20 @@ function normalizeBizCode(code: unknown) {
   return -1;
 }
 
-function triggerUnauthorized() {
-  clearAccessToken();
-  unauthorizedHandler?.();
+function isRefreshRequest(url?: string) {
+  return Boolean(url?.includes("/member/auth/token/refresh"));
 }
 
-function getErrorMessage(error: AxiosError) {
-  const data = error.response?.data;
-  if (isWrappedApiResponse(data)) {
-    return data.message || "请求失败";
-  }
-  return error.message || "请求失败，请稍后重试";
-}
+let refreshPromise: Promise<string> | null = null;
 
 async function requestTokenRefresh() {
-  const currentToken = getAccessToken();
+  const currentToken = getMemberAccessToken();
   if (!currentToken) {
-    throw new Error("当前未登录");
+    throw new Error("买家未登录");
   }
 
   const response = await axios.post<ApiResponse<{ token: string }>>(
-    `${BASE_URL}/demo/token/refresh`,
+    `${BASE_URL}/member/auth/token/refresh`,
     null,
     { headers: { Authorization: `Bearer ${currentToken}` } }
   );
@@ -65,10 +49,10 @@ async function requestTokenRefresh() {
   const data = response.data;
   const code = normalizeBizCode(data?.code);
   if (!isWrappedApiResponse(data) || code !== 200 || !data.data?.token) {
-    throw new Error(data?.message || "刷新登录状态失败");
+    throw new Error(data?.message || "买家登录状态刷新失败");
   }
 
-  setAccessToken(data.data.token);
+  setMemberAccessToken(data.data.token);
   return data.data.token;
 }
 
@@ -82,11 +66,11 @@ async function refreshTokenAndRetry(config: RetryRequestConfig) {
   config.headers = config.headers || {};
   config.headers.Authorization = `Bearer ${newToken}`;
   config._retry = true;
-  return service(config);
+  return memberService(config);
 }
 
-service.interceptors.request.use((config) => {
-  const token = getAccessToken();
+memberService.interceptors.request.use((config) => {
+  const token = getMemberAccessToken();
   if (token) {
     config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${token}`;
@@ -94,12 +78,8 @@ service.interceptors.request.use((config) => {
   return config;
 });
 
-service.interceptors.response.use(
+memberService.interceptors.response.use(
   async (response) => {
-    if (response.config.responseType === "blob") {
-      return response;
-    }
-
     const responseData = response.data;
     if (!isWrappedApiResponse(responseData)) {
       return responseData;
@@ -112,69 +92,39 @@ service.interceptors.response.use(
 
     const config = response.config as RetryRequestConfig;
     const message = responseData.message || "请求失败";
-
-    if (bizCode === 401 && !config._retry && !isRefreshRequest(config.url) && getAccessToken()) {
+    if (bizCode === 401 && !config._retry && !isRefreshRequest(config.url) && getMemberAccessToken()) {
       try {
         return await refreshTokenAndRetry(config);
       } catch {
-        ElMessage.error("登录状态已失效，请重新登录");
-        triggerUnauthorized();
+        clearMemberAccessToken();
+        ElMessage.error("买家登录状态已失效，请重新登录");
         return Promise.reject(new Error(message));
       }
     }
 
-    if (bizCode === 403) {
-      ElMessage.error("无权限访问该功能");
-    } else if (bizCode === 401) {
-      ElMessage.error("登录状态已失效，请重新登录");
-      triggerUnauthorized();
-    } else {
-      ElMessage.error(message);
-    }
-
+    ElMessage.error(message);
     return Promise.reject(new Error(message));
   },
   async (error: AxiosError) => {
     const config = (error.config || {}) as RetryRequestConfig;
     const status = error.response?.status;
-    const unauthorized = status === 401;
-
-    if (unauthorized && !config._retry && !isRefreshRequest(config.url) && getAccessToken()) {
+    if (status === 401 && !config._retry && !isRefreshRequest(config.url) && getMemberAccessToken()) {
       try {
         return await refreshTokenAndRetry(config);
       } catch {
-        ElMessage.error("登录状态已失效，请重新登录");
-        triggerUnauthorized();
+        clearMemberAccessToken();
+        ElMessage.error("买家登录状态已失效，请重新登录");
         return Promise.reject(error);
       }
     }
 
-    if (status === 403) {
-      ElMessage.error("无权限访问该功能");
-    } else if (unauthorized) {
-      ElMessage.error("登录状态已失效，请重新登录");
-      triggerUnauthorized();
-    } else {
-      ElMessage.error(getErrorMessage(error));
-    }
-
+    ElMessage.error(error.message || "请求失败，请稍后重试");
     return Promise.reject(error);
   }
 );
 
-export function setUnauthorizedHandler(handler: UnauthorizedHandler) {
-  unauthorizedHandler = handler;
-}
-
-export function request<T = unknown>(config: AxiosRequestConfig) {
-  return service.request<unknown, T>(config);
-}
-
-export function download(config: AxiosRequestConfig) {
-  return service.request({
-    ...config,
-    responseType: "blob"
-  });
+export function memberRequest<T = unknown>(config: AxiosRequestConfig) {
+  return memberService.request<unknown, T>(config);
 }
 
 
